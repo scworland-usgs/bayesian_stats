@@ -1,4 +1,3 @@
 # stats_design
 R scripts, stan code, and markdown files detailing elements of statistical model design. The scripts and ideas in this repository draw heavily on Richarch Mcelreath's [Statistical Rethinking](http://xcelab.net/rm/statistical-rethinking/) book and lectures. Most of the content here is philosophically driven and takes an informal tutorial approach. Motivation can be found [here](https://www.marxists.org/reference/subject/philosophy/works/us/taylor.htm) and [here](http://redpenblackpen.tumblr.com/image/142282350107).
 
-"In spite of this, it would be a mistake to think that scientists are more ‘objective’ than other people. It is not the objectivity or detachment of the individual scientist but of science itself (what may be called ‘the friendly-hostile cooperation of scientists’ — that is, their readiness for mutual criticism) which makes for objectivity." -Karl Popper, The Myth of the Framework: In Defence of Science and Rationality
