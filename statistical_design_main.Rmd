@@ -1,0 +1,114 @@
+---
+title: "Statistical Model design"
+author: "scworland@usgs.gov"
+date: "July 7, 2016"
+output:
+  pdf_document:
+    toc: yes
+---
+
+## Preface
+
+
+
+_"it would be a mistake to think that scientists are more ‘objective’ than other people. It is not the objectivity or detachment of the individual scientist but of science itself (what may be called ‘the friendly-hostile cooperation of scientists’ — that is, their readiness for mutual criticism) which makes for objectivity."_ 
+
+
+-Karl Popper, The Myth of the Framework: In Defence of Science and Rationality
+
+
+This file contains text, R scripts and stan model code detailing elements of statistical model design. The scripts and ideas in this repository draw heavily on Richarch Mcelreath's [Statistical Rethinking](http://xcelab.net/rm/statistical-rethinking/) book and lectures. Most of the content here is philosophically driven and takes an informal tutorial approach. Motivation can be found [here](https://www.marxists.org/reference/subject/philosophy/works/us/taylor.htm) and [here](http://redpenblackpen.tumblr.com/image/142282350107).
+
+
+## Statistical Rethinking Chapter 1
+
+* The continuous version of discrete logic is Bayesian inference
+* Bayesian inference: (1) nominate all the things that could happen according to our assumptions (prior), (2) look at what did happen (model), and (3) see which "path" from our nominations is the most consistent with what happened (data)
+* logic is garbage in garbage out
+* Multiple process models will be valid under one statistical model
+* Experimenter's Regress: basically scientists are set to confirm their hypothesis. More information in Collins, H. M.,  Pinch, T. 1988. "The golem: What you should know about science"
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=200pt]{figures/fig1.png}
+\caption{Experimenter's regress}
+\end{figure}
+
+* Strict falsification is not possible
+    + hypotheses are not models
+    + measurement is consensual, not logical
+    + falsifiability is about demarcation
+    + good [Popper quotes](http://www.criticalrationalism.net/2010/02/02/karl-poppers-17-theses-regarding-scientific-knowledge/)
+    
+* small world ---> models, large world ---> real world
+
+## Statistical Rethinking Chapter 2
+
+### Example 1: Garden of Forking Data
+
+Story that that provides metaphor for first example: [garden of forking paths](http://www.cems.uvm.edu/~rsnapp/teaching/cs32/homework/borges_garden.pdf)
+
+
+__problem:__ There is a bag with 4 marbles and we know they can either be all white, all blue, or some combination of blue and white. Without any futher information, we would say each of the 5 possibilities are equally probable (uniform, or "flat", priors). We then draw three marbles, with replacement, and the result is blue-white-blue (data).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.1.png}
+\end{figure}
+
+__question:__ Can we use this data to update our "beliefs" about the probabilites? ie. are each of the 5 possibilites still equally probable?
+
+__approach:__ (1) Count all the ways that _each_ of the 5 possibilities could happen based on three draws, and eliminate ways (ie. "paths") that are not consistent with the data we observed. For example, let's just look at the second possibility above where there is 1 blue and 3 white: 
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=100pt]{figures/fig2.2.png}
+\end{figure}
+
+\newpage 
+
+The first question ignores the data: how many ways can we make three draws that is consistent with our conjecture (hypothesis) of 1 blue and 3 white marbles? ie. How many ways can we draw three marbels and not rule out that the proportion is 1 blue to 3 white? We can illustrate the draws by building a "tree" of forking possibilities:  
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.3.png}
+\end{figure}
+
+The figure above indicates that there are 64 possible ways to draw three marbles and not rule out the conjecture. Now we look at our data and ask, "which paths are consistent with the hypothesis given the data"?:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.4.png}
+\end{figure}
+
+We can eliminate all but three of the paths. What have we figured out? We have gained some idea about the probability of conjecture two being correct, but it is pretty meaningless by itself. We want to know the relative probability of all of the possibilities given our data. We can rule out hypothesis 1 and 5 because we know that there is at least 1 blue and 1 white marble. We also know that there are 3/64 paths for hypothesis 2:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=125pt]{figures/fig2.5.png}
+\end{figure}
+
+\newpage
+
+Now we just repeat the forking paths for the other two possible hypotheses:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.6.png}
+\end{figure}
+
+Now we simply divide the number of ways to obtain our data for each hypothesis [`c(3,8,9)`] by the sum all the possible ways [`sum(c(3,8,9))`] to obtain normalized plausibilities [`c(3,8,9)/sum(c(3,8,9))`]:
+
+```{r}
+ways = c(3,8,9)
+sum.ways = sum(c(3,8,9))
+ways/sum.ways
+```
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.7.png}
+\end{figure}
+
+
+
