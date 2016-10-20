@@ -8,14 +8,19 @@ output:
 ---
 
 ```{r, echo=F}
-pacman::p_load(coda,mvtnorm,rethinking, ggplot2, gridExtra)
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+
 ```
 
 ## Preface
 
 
 
-_"it would be a mistake to think that scientists are more ‘objective’ than other people. It is not the objectivity or detachment of the individual scientist but of science itself (what may be called ‘the friendly-hostile cooperation of scientists’ — that is, their readiness for mutual criticism) which makes for objectivity."_ 
+"it would be a mistake to think that scientists are more ‘objective’ than other people. It is not the objectivity or detachment of the individual scientist but of science itself (what may be called ‘the friendly-hostile cooperation of scientists’ — that is,         their readiness for mutual criticism) which makes for objectivity."
 
 
 -Karl Popper, The Myth of the Framework: In Defence of Science and Rationality
@@ -68,7 +73,7 @@ This file contains text, R scripts and stan model code detailing elements of sta
 
 **Collect data and calculate likelihood**
 
-+ toss the gloabe nine time (N=9), and say how likely that exact sample is for out of the "universe" of possible 9 toss samples
++ toss the globe nine time (N=9), and say how likely that exact sample is out of the "universe" of possible 9 toss samples
 
 **Make some assumptions and choose likelihood**
 
@@ -200,7 +205,7 @@ posterior <- unstd.posterior / sum(unstd.posterior)
 
 The plot looks almost the same at just the likelihood (becuase of our flat prior), but now all of the probabilities sum to 1:
 
-```{r, echo=F, fig.height=3, fig.width=5,fig.align='center'}
+```{r, echo=F}
 # plot likelihood for each parameter
 ggplot() + geom_bar(aes(p_grid,posterior),stat="identity", width=0.01) +
   theme_bw() + labs(x="probability of water", y = "posterior")
@@ -213,7 +218,7 @@ Let's look at what happens when we change the number of grid points to 100:
 p_grid <- seq(from=0, to=1, length.out=100)
 ```
 
-```{r, echo=F, fig.height=3, fig.width=5,fig.align='center'}
+```{r, echo=F}
 # define grid
 p_grid <- seq(from=0, to=1, length.out=100)
 
@@ -239,11 +244,11 @@ ggplot() +
 Let's also look at a couple of other priors. First let's say we know the probability of water is greater than 0.5. We can assign every p value less than 0.5 a prior probability of 0:
 
 ```{r, eval=F}
-# define grid
+# define prior
 prior <- ifelse(p_grid <0.5, 0, 1)
 ```
 
-```{r, echo=F, fig.height=3, fig.width=5,fig.align='center'}
+```{r, echo=F}
 # laplace prior
 prior <- ifelse(p_grid <0.5, 0, 1)
 
@@ -254,7 +259,7 @@ ggplot() + geom_bar(aes(p_grid, prior),stat="identity", width=0.005) +
   xlab("possible proportion of water") + ggtitle("Truncated uniform prior")
 ```
 
-```{r, echo=F, fig.height=3, fig.width=5,fig.align='center'}
+```{r, echo=F}
 # define grid
 p_grid <- seq(from=0, to=1, length.out=100)
 
@@ -284,7 +289,7 @@ Another prior could be something like a Laplace prior where most of the probaili
 prior <- exp(-5*abs(p_grid-0.5))
 ```
 
-```{r, echo=F, fig.height=3, fig.width=5,fig.align='center'}
+```{r, echo=F}
 # laplace prior
 prior <- exp(-5*abs(p_grid-0.5))
 
@@ -295,7 +300,7 @@ ggplot() + geom_bar(aes(p_grid, prior),stat="identity", width=0.005) +
   xlab("possible proportion of water") + ggtitle("Laplace prior")
 ```
 
-```{r, echo=F, fig.height=3, fig.width=5,fig.align='center'}
+```{r, echo=F}
 # define grid
 p_grid <- seq(from=0, to=1, length.out=100)
 
@@ -324,7 +329,7 @@ ggplot() +
 + the Gaussian distribution is convienent because it can be completely described by its mean and variance
 + the log of the Gaussian distribution is a parabola which is described by a quadratic function
 + The quadratic approximation is useful for any log-posterior distribution that is a parabola
-+ a parabola is simple to use because it has no second derivatives beyond the second, so if we know the center of a parabola and its second derivative, we know everything about it.
++ a parabola is simple to use because it has no derivatives beyond the second, so if we know the center of a parabola and its second derivative, we know everything about it.
 
 
 
@@ -607,4 +612,1285 @@ $$
 
 + This last value can be interpreted as, "Given a panda that had twins, then a single offspring, then returned positive for test=A, there is a 56% chance that the panda is from species A." Notice how the posterior probabilities updated with each new piece of information.
 
+## Statistical Rethinking Chapter 3
+
+This chapter deals with sampling from a posterior distribution. This is something I am already familiar with so I just touch on the examples here.
+
+### Basic sampling
+
+First create a posterior distribution using the exact code above:
+
+```{r}
+p_grid <- seq(from=0, to=1, length.out=1000)
+prior <- rep(1, 1000)
+likelihood <- dbinom(6, size=9, prob=p_grid)
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+```
+
+Now we can draw 100,000 samples from the posterior distribution using the `sample` function
+
+```{r}
+samples <- sample(p_grid, prob=posterior, size=1e5, replace=T)
+```
+
+```{r, echo=F, cache=F}
+ggplot(data=data.frame(samples), aes(1:length(samples),samples)) + 
+  geom_point(alpha=0.1) + theme_bw() + 
+  stat_density2d(aes(fill = ..level..), geom="polygon",alpha=0.1,bins = 50) +
+  labs(y="proportion of water", x="sample number") + guides(fill=F) + ylim(0,1)
+```
+
+### Summarizing samples
+
+The next step is to ask questions about the posterior. For example, what is the posterior probability that the proportion of water is less than 0.5? Because we have a grid (discrete values), we can just sum all the probabilities where `p_grid` is less than 0.5:
+
+```{r}
+sum(posterior[p_grid < 0.5])
+```
+
+For a single parameter, this is simple! This simplicity will not hold once we move to multiple parameters. One way that does generalize well is to just divide the number of samples less than 0.5 by the total number of samples:
+
+```{r}
+sum(samples < 0.5)/length(samples)
+```
+
+
+We are just approximating the probability using samples from the posterior distribution, but as we see, it gets pretty close. We can ask any question this way:
+
+```{r}
+sum(samples > 0.5 & samples < 0.75)/length(samples)
+```
+
+
+There is a 60% chance that $p$ falls between 0.5 and 0.75. What if we wanted to ask the opposite? What values of $p$ bound the middle 80% of the density?
+
+```{r}
+quantile(samples, c(0.1,0.9))
+```
+
+```{r, echo=F, warning=F}
+samp_dens <- with(density(samples), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+  
+low = quantile(samples, c(0.1,0.9))[1]
+high = quantile(samples, c(0.1,0.9))[2]
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="samples",y="density") +
+  geom_area(aes(x = ifelse(x>low & x<high , x, 0)),alpha=0.5) +
+  scale_y_continuous(limits = c(0, max(samp_dens$y))) +
+  scale_x_continuous(limits = c(0.01, 1.1))
+```
+
+So 80% of the probability lies between $p$ values of 0.45 and 0.81. These are referred to as *percentile intervals* (PI) and work well if the posterior distribution isn't too asymmetrical. Let's create an example where the PI doesn't really reflect which parameters are consistent with the data, where we toss the globe three times and three waters.
+
+```{r}
+p_grid <- seq(from=0, to=1, length.out=1000)
+prior <- rep(1, 1000)
+
+# 3 tosses, 3 waters
+likelihood <- dbinom(3, size=3, prob=p_grid) 
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+
+samples <- sample(p_grid, prob=posterior, size=1e4, replace=T)
+```
+
+Let's look at the 50th percentile:
+
+```{r}
+# 50th PI
+quantile(samples, c(0.25,0.75))
+
+# 50th PI using rethinking function
+PI(samples, prob=0.5)
+```
+
+```{r, echo=F, warning=F}
+samp_dens <- with(density(samples), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+  
+low = PI(samples, prob=0.5)[1]
+high = PI(samples, prob=0.5)[2]
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="samples",y="density") +
+  geom_area(aes(x = ifelse(x>low & x<high , x, 0)),alpha=0.5) +
+  scale_y_continuous(limits = c(0, max(samp_dens$y))) +
+  scale_x_continuous(limits = c(0.01, 1.1))
+```
+
+This excludes the most probable parameter values (near 1 for this example), so obviously PI isn't what we are interested in. What we want to know is _what is the narrowest interval that contains the probability mass we are interested in_. This is referred to as the highest posterior density interval (HPDI) and can be found using the `HPDI` function:
+
+```{r}
+# HPDI from the rethinking package
+HPDI(samples, prob=0.5)
+```
+
+```{r, echo=F, warning=F}
+samp_dens <- with(density(samples), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+  
+low = HPDI(samples, prob=0.5)[1]
+high = HPDI(samples, prob=0.5)[2]
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="samples",y="density") +
+  geom_area(aes(x = ifelse(x>low & x<high , x, 0)),alpha=0.5) +
+  scale_y_continuous(limits = c(0, max(samp_dens$y))) +
+  scale_x_continuous(limits = c(0.01, 1.1))
+```
+
+
+The HPDI captures the parameters with the highest posterior probability and it's also much narrower than the PI. 
+
+### Point estimates
+
+We can also calculate point estimates from the posterior distribution:
+
+```{r}
+c(mean(samples), median(samples), chainmode(samples))
+```
+
+```{r, echo=F, warning=F}
+samp_dens <- with(density(samples), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="samples",y="density") +
+  scale_y_continuous(limits = c(0, max(samp_dens$y))) +
+  scale_x_continuous(limits = c(0.01, 1.1)) + 
+  geom_vline(xintercept=mean(samples),linetype="dashed",color="red") +
+  geom_vline(xintercept=chainmode(samples),linetype="dashed",color="blue") + 
+  geom_vline(xintercept=median(samples),linetype="dashed") + 
+  annotate("label",x=mean(samples), y=0.002, label="mean",color="red") +
+  annotate("label",x=median(samples), y=0.001, label="median") +
+  annotate("label",x=chainmode(samples), y=0.003, label="MAP",color="blue")
+  
+```
+
+
+It is better to just report the whole posterior distribution, but if we are required to report a single value, then we can use a loss function to decide which value we want to report. A loss function just calculates the "cost" associated with choosing a particular value of a parameter. For example, if we choose 0.5 as our parameter, the cost of that choice is:
+
+```{r}
+sum(posterior*abs(0.5-p_grid))
+```
+
+That is, we just take the absolute value of the difference between our choice and every other possible value and weight each difference by the probability of the parameter values in `p_grid`. If a parameter value has high probability, we want to be sure to penalize the difference between that value and our guess. The absolute loss, $d-p$, corresponds to the the median, and the squared loss, $(d-p)^2$, corresponds to the mean.
+
+```{r}
+absolute.loss <- sapply(p_grid, function(d) sum(posterior*abs(d-p_grid)))
+squared.loss <- sapply(p_grid, function(d) sum(posterior*(d-p_grid)^2))
+
+p_grid[which.min(absolute.loss)]
+p_grid[which.min(squared.loss)]
+```
+
+```{r, echo=F}
+loss.df <- data.frame(p_grid,absolute.loss,squared.loss) %>%
+  melt(., id.vars="p_grid")
+
+ggplot(loss.df) + geom_line(aes(x=p_grid,y=value,color=variable)) + theme_bw() +
+  labs(x="parameter value", y="loss value", color="loss function") +
+  theme(legend.position=c(0.7,0.7)) +
+  geom_point(aes(x=p_grid[which.min(absolute.loss)], 
+                 y = absolute.loss[which.min(absolute.loss)]), shape=21) +
+  geom_point(aes(x=p_grid[which.min(squared.loss)], 
+                 y = squared.loss[which.min(squared.loss)]),shape=21)
+```
+
+
+### Simulating observations
+
+We often want to simulate our data using the predictions from our model (often called "dummy data"). Let's start by looking at the probability of every possible out come from two tosses of the globe (0 water, 1 water, or 2 waters), and use the real proportion of water on earth (0.7).
+
+```{r}
+dbinom(0:2, size=2, prob=0.7)
+```
+
+The output is saying that the probability of seeing zero waters if p = 0.7 is 0.09, seeing 1 water is 0.42, and 2 waters 0.49. Now let's sample from this distribution.
+
+```{r}
+rbinom(10, size=2, prob=0.7)
+```
+
+Each value in the output provides the number of waters seen if the globe was tossed 3 times. The 10 in the function just simulates the 2 tosses 10 times. If we run this a bunch of times, the proportion of 0s, 1s, and 2s should be the same as the analytical values we got from using `dbinom`.
+
+```{r}
+n=1000
+table(rbinom(n, size=2, prob=0.7))/n
+```
+
+The above examples were for using only two samples (or tosses). Let's look at it for our 9 toss example.
+
+```{r}
+n=1e5
+w <- rbinom(n, size=9, prob=0.7)
+```
+
+```{r, echo=F}
+d <- data.frame(table(w)/n)
+
+# plot
+ggplot(d) + geom_bar(aes(w, Freq),stat="identity", width=0.05) +
+  theme_bw() + labs(x="predicted number of waters",y="Frequency") 
+```
+
+### Simulating observations for the globe model
+
+In reality, we really want our model to propagate the uncertainty of the parameters into the model predictions. For the globe tossing example, we have two types uncertainty (we could come up with more, but below are the two big ones). 
+
+1. sampling uncertainty: although we know that water is more likely, we do not know what the next toss we be
+2. parameters uncertainty: there is some level of uncertainty around $p$ for more real world problems. 
+
+Let's first recreate our posterior distribution and sample from it:
+
+```{r}
+p_grid <- seq(from=0, to=1, length.out=1000)
+prior <- rep(1, 1000)
+
+# The likelihood of getting 6 waters from 9 tosses
+# for each possible value of p defined in p_grid
+likelihood <- dbinom(6, size=9, prob=p_grid) 
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+
+# 10,000 samples from the posterior distribution
+samples <- sample(p_grid, prob=posterior, size=1e4, replace=T)
+```
+
+Let's plot our samples from the posterior:
+
+```{r, echo=F}
+samp_dens <- with(density(samples), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="samples from posterior",y="density") 
+```
+
+Now, lets generate 100,000 random binomial samples for the globe example, using the MAP (=0.676) from our distribution as the probability:
+
+```{r}
+n=1e5
+
+# Create predictions using MAP of samples
+w <- rbinom(n, size=9, prob=chainmode(samples))
+```
+
+recall that `w` is a vector of values between 0 and 9, representing a hypothetical "9-toss globe experiment" using a fixed value for $p$, where $p=0.676$, the MAP point estimate from the samples vector. 
+
+How can we use our posterior distribution to propogate parameter uncertainty into our predictions? Think about what we have in the `samples` vector. We have a bunch (10,000) possible values of $p$ that are repeated in proportion to how much "we believe" (based off our likelihood and prior) each value is the "true" value. We can just replace a fixed value, like the MAP, with the samples vector when making our predictions. Let's do it, and then think about what it is giving us.
+
+```{r}
+n=1e5
+w <- rbinom(n, size=9, prob=samples)
+```
+
+McElreath says is better than I could, "For each sampled value, a random binmoial observation is generated. Since the sampled values appear in proportion to their posterior probabilities, the resulting simulated observations are averaged over the posterior." Let's look at our predictions both using several point estimates (MAP, mean, median), and the samples vector:
+
+```{r, echo=F}
+n=1e5
+w_map <- rbinom(n, size=9, prob=chainmode(samples))
+w_mean <- rbinom(n, size=9, prob=mean(samples))
+w_median <- rbinom(n, size=9, prob=median(samples))
+
+d <- data.frame(table(w)/n) %>% 
+  rename(posterior=Freq, p = w) %>%
+  mutate(MAP = table(w_map)/n,
+         mean = table(w_mean)/n,
+         median = table(w_median)/n) %>%
+  melt(., id.vars="p")
+
+# plot
+ggplot(d, aes(p,value,fill=variable)) + 
+  geom_bar(color="black",stat="identity", width=0.35,position=position_dodge(width=0.5)) +
+  labs(x="predicted number of waters",y="Frequency") + theme_bw() +
+  theme(legend.position=c(0.2,0.65))
+```
+
+Note that the point estimates predict the values 5, 6, and 7 with a higher frequency than when we average over the entire posterior. Also note that using the entire posterior predicts 0, 1, 2, 3, and 9 with a higher frequency than the point estimates. We are effectively saying, "we don't have enough data to be as confident as our point estimates might lead us to believe." Remember we only have 9 data observations! We might also want to compare things like the correlation structure between the data and predictions (e.g., how many switches do we have in our data, WLWWWLWLW = 6 switches, and compare that to our predictions). This is one way to address assumptions of our model, like independence of the tosses.
+
+### Homework
+
+**(3M1)**
+
+Globe tossing example had turned out to be 8 water in 15 tosses:
+
+```{r}
+p_grid <- seq(from=0, to=1, length.out=1000)
+prior <- rep(1, 1000)
+
+# The likelihood of getting 8 waters from 15 tosses
+# for each possible value of p defined in p_grid
+likelihood <- dbinom(8, size=15, prob=p_grid) 
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+plot( posterior ~ p_grid , type="l" )
+```
+
+**(3M2)**
+
+Sample posterior 10,000 times and extract 90% HPDI:
+
+```{r}
+# 10,000 samples from the posterior distribution
+samples <- sample(p_grid, prob=posterior, size=1e4, replace=T)
+
+# 90% HPDI
+HPDI(samples, 0.9)
+```
+
+**(3M3)**
+
+Construct a posterior predictive check using the entire posterior. What is the probability of observing 8 water in 15 tosses? 
+
+```{r, fig.width=3, fig.height=3}
+# generate 10,000 predictions
+w <- rbinom(1e4, 15, samples)
+simplehist(w)
+```
+
+```{r, echo=F, results='asis'}
+d <- data.frame(table(w)/1e4) %>%
+  rename("# of waters" = w, "Frequency"=Freq)
+
+d.tab <- xtable(d)
+align(d.tab) <- c("c","c","c")
+print(d.tab,include.rownames=F,comment = F)
+```
+
+**(3M4)**
+
+Use the posterior distribution to calculate the probability of observing 6 waters in 9 tosses:
+
+```{r, fig.width=3, fig.height=3}
+# generate 10,000 predictions
+w_old <- rbinom(1e4, 9, samples)
+simplehist(w_old)
+```
+
+```{r, echo=F, results='asis'}
+d <- data.frame(table(w)/1e4) %>%
+  rename("# of waters" = w, "Frequency"=Freq)
+
+d.tab <- xtable(d)
+align(d.tab) <- c("c","c","c")
+print(d.tab,include.rownames=F,comment = F)
+```
+
+**(3M5)**
+
+Step through 3M1-3M4 but using a prior that is zero for $p \leq$ 0.5 and constant above 0.5
+
+```{r}
+p_grid <- seq(from=0, to=1, length.out=1000)
+prior <- ifelse(p_grid <= 0.5, 0, 1) # truncated prior
+
+# The likelihood of getting 8 waters from 15 tosses
+# for each possible value of p defined in p_grid
+# using a truncated prior
+likelihood <- dbinom(8, size=15, prob=p_grid) 
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+
+# 10,000 samples from the posterior distribution
+samples <- sample(p_grid, prob=posterior, size=1e4, replace=T)
+```
+
+Let's plot the samples from the new posterior:
+
+```{r, echo=F}
+samp_dens <- with(density(samples), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="samples from posterior",y="density") 
+```
+
+Notice the almost zero probability below and 0.5 (there is a little bit due to sampling error). We can also calculate the new 90% HPDI:
+
+```{r}
+# 90% HPDI
+HPDI(samples, 0.9)
+```
+
+Recalculate the posterior predictive check and plot both predicted frequencies on the same plot:
+
+```{r, fig.width=3, fig.height=3}
+# generate 10,000 predictions
+w2 <- rbinom(1e4, 15, samples)
+simplehist(w2)
+```
+
+```{r, echo=F}
+
+d2 <- data.frame(table(w2)/1e4) %>%
+  rename(truncated=Freq, p = w2) 
+
+d <- data.frame(table(w)/1e4) %>% 
+  rename(uniform=Freq, p = w) %>%
+  left_join(d2, by = "p") %>%
+  mutate(truncated = ifelse(is.na(truncated),0,truncated)) %>%
+  melt(., id.vars="p") %>%
+  mutate(p=as.numeric(p))
+
+# plot
+ggplot(d, aes(p,value,fill=variable)) + 
+  geom_bar(color="black",stat="identity", width=0.35,position=position_dodge(width=0.5)) +
+  scale_x_continuous(breaks=0:15) +
+  labs(x="predicted number of waters",y="Frequency") + theme_bw() +
+  geom_vline(xintercept=0.7*15, linetype="dashed") +
+  theme(legend.position=c(0.2,0.65))
+```
+
+The dashed line represents the "true" value of 0.7. Notice how the informative, truncated prior allocated more probability to the predicted values closer to the true value of 10.5 waters out of 15.
+
+
+**(3H)**
+
+For these exercises we're going to be using a dataset from the `rethinking` package. The data represents the gender (male=1, female=0) of officially reported 1st and 2cd born children in 100 two-child families. The table below has only the first 10 values
+
+```{r}
+data(homeworkch3)
+```
+
+```{r, echo=F, results='asis'}
+births <- data.frame(first.child = birth1, second.child = birth2)
+births.tab <- xtable(births[1:10,],digits=c(0,0,0))
+align(births.tab) <- c("c","c","c")
+print(births.tab,include.rownames=T,comment = F)
+```
+
+**(3H1)**
+
+Use grid approximation to calculate the posterior distribution of the probability of a birth being a boy assuming a uniform prior. Which parameter value maximizes the posterior? We need to first figure out how many boys there were:
+
+```{r}
+nboys <- sum(birth1) + sum(birth2) # number of boys
+total <- length(birth1) + length(birth2) # number of births
+```
+
+
+```{r}
+n=1000
+p_grid <- seq(from=0, to=1, length.out=n)
+prior <- rep(1, n) # uniform prior
+
+# The likelihood of getting 111 boys from 22 births
+# for each possible value of p defined in p_grid
+# using a uniform prior
+likelihood <- dbinom(nboys, size=total, prob=p_grid) 
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+
+MAP <- p_grid[which.max(posterior)]
+MAP
+```
+
+```{r, echo=F}
+ggplot() + geom_line(aes(p_grid,posterior)) + theme_bw() +
+  geom_vline(xintercept=MAP, linetype="dashed")
+```
+
+**(3H2)**
+
+Draw 10,000 samples from the posterior and calculate the 50%, 89%, and 97% HPDIs:
+
+```{r}
+# 10,000 samples from the posterior distribution
+samples <- sample(p_grid, prob=posterior, size=1e4, replace=T)
+
+# 50%, 89%, and 97% HPDIs
+HPDI(samples, 0.5)
+HPDI(samples, 0.89)
+HPDI(samples, 0.97)
+```
+
+```{r, echo=F}
+low50 = HPDI(samples, 0.5)[1]
+high50 = HPDI(samples, 0.5)[2]
+
+low89 = HPDI(samples, 0.89)[1]
+high89 = HPDI(samples, 0.89)[2]
+
+low97 = HPDI(samples, 0.97)[1]
+high97 = HPDI(samples, 0.97)[2]
+
+ggplot() + geom_line(aes(p_grid,posterior)) + theme_bw() +
+  labs(x="samples",y="density") +
+  geom_area(aes(x = ifelse(p_grid>low50 & p_grid<high50, p_grid, 0),y=posterior),alpha=0.9) +
+  geom_area(aes(x = ifelse(p_grid>low89 & p_grid<high89, p_grid, 0),y=posterior),alpha=0.6) +
+  geom_area(aes(x = ifelse(p_grid>low97 & p_grid<high97, p_grid, 0),y=posterior),alpha=0.3) +
+  scale_y_continuous(limits = c(0, max(posterior))) +
+  scale_x_continuous(limits = c(MAP-0.15, MAP+0.15)) +
+  annotate("text",x=0.47, y=0.002, label="97%") +
+  annotate("text",x=0.50, y=0.006, label="89%") +
+  annotate("text",x=0.53, y=0.011, label="50%") 
+```
+
+**(3H3)**
+
+Simulate 10,000 births using our model and compare the predicted to the actual.
+
+```{r}
+# generate 10,000 predictions
+b <- rbinom(1e4, total, samples)
+```
+
+```{r, echo=F}
+d <- data.frame(table(b)/1e4) %>%
+  mutate(b=as.numeric(as.character(b)))
+
+# plot
+ggplot(d) + geom_bar(aes(b, Freq),stat="identity", width=0.2) +
+  theme_bw() + labs(x="predicted number of boys",y="Frequency") +
+  scale_x_continuous(breaks=seq(75,150,5), labels=seq(75,150,5)) +
+  geom_vline(xintercept=nboys,linetype="dashed", color="dodgerblue", size=1)
+```
+
+The blue line is the actual number of boys from our dataset. The model did a pretty good job. 
+
+**(3H4)**
+
+Now predict only 100 births (representing just the first borns), and compare the predicted values to the actual number of boys in the first borns group. This should stretch the model a bit more.
+
+```{r}
+# generate 10,000 predictions
+b <- rbinom(1e4, length(birth1), samples)
+```
+
+```{r, echo=F}
+d <- data.frame(table(b)/1e4) %>%
+  mutate(b=as.numeric(as.character(b)))
+
+# plot
+ggplot(d) + geom_bar(aes(b, Freq),stat="identity", width=0.2) +
+  theme_bw() + labs(x="predicted number of boys",y="Frequency") +
+  scale_x_continuous(breaks=seq(30,80,5), labels=seq(30,80,5)) +
+  geom_vline(xintercept=sum(birth1),linetype="dashed", color="dodgerblue", size=1)
+```
+
+The blue line is the actual number of boys from the first born column in our dataset. The model thinks there should be more boys than there actually are. This shows why a point estimate could be problematic, and why using density intervals (and judiciously reporting that any value within the interval is credible) can still capture the "correct" value. 
+
+```{r}
+births_after_girls <- birth2[birth1==0]
+births_after_girls_sim <- rbinom(1e4, length(births_after_girls), samples)
+```
+
+
+```{r, echo=F}
+d <- data.frame(table(births_after_girls_sim)/1e4) %>%
+  mutate(b=as.numeric(as.character(births_after_girls_sim)))
+
+# plot
+ggplot(d) + geom_bar(aes(b, Freq),stat="identity", width=0.2) +
+  theme_bw() + labs(x="predicted number of boys when first birth was a girl",y="Frequency") +
+  scale_x_continuous(breaks=seq(0,40,5), labels=seq(0,40,5)) +
+  geom_vline(xintercept=sum(births_after_girls),linetype="dashed", color="dodgerblue", size=1)
+```
+
+
+## Statistical Rethinking Chapter 4
+
+This chapter begins with some cool stuff about the Gaussian distribution and why it arises so much in nature (central limit theorem). I am skipping over a lot of that material here, but below are some interesting take-aways.
+
++ If a outcome is normally distributed, we still cannot say anything about the data generating process. Gaussian distributions arise from adding small fluctuations from some mean (large fluctuations are guassian if we take the log transform), which resutls in a distribution that has "shed all information about the underlying process, aside from the mean and spread".
++ We can often build a statistical model of a process way before we can build a physical process model.
++ The Gaussian distribution is the most natural expression of the state of our ignorance because the Gaussian distribution is the shape that can be realized in the largest number of ways without introducing new assumptions (based off information theory and maximum entropy).
+
+### Language for describing models
+
+1. define response variable (i.e., $y$)
+2. define likelihood for response variable (always gaussian for linear regression)
+3. define predictor variables
+4. relate parameters of likelihood to predictor variables
+5. choose priors for every parameter
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \beta \times x_i \\
+\beta &\sim Normal(0,10) \\
+\sigma &\sim HalfCauchy(0,1)
+\end{aligned}
+$$
+
+These models define the ways values of some variables can arise, given values of other variables. Or said another way, we are mapping one set of variables through a probability distribution onto another set of variables.
+
+**Application to the globe tossing example**
+
+Define our globe tossing model:
+
+$$
+\begin{aligned}
+w &\sim Binomial(n,p) \\
+p &\sim Uniform(0,1) 
+\end{aligned}
+$$
+
+In english, "the number of ws is distributed binomially (or drawn from a binomial distriubtion), with sample size n and probability $p$. The prior for $p$ is assumed to be uniform between zero and one." The ~ indicates that the relationship between the LHS and the RHS is stochastic. Let's define this using Bayes theorem, and then support it with R code and grid approximation.
+
+$$
+p(p|w,n) = \frac{Binomial(w|n,p)Uniform(p|0,1)}{\int Binomial(w|n,p)Uniform(p|0,1) dp}
+$$
+
+```{r}
+# data
+w <- 6
+n <- 9
+
+# possible p values
+p_grid <- seq(from=0,to=1,length.out=1000)
+
+# likelihood
+likelihood <- dbinom(w,n,p_grid)
+
+# prior
+prior <- dunif(p_grid,0,1)
+
+# posterior
+posterior <- likelihood*prior/sum(likelihood*prior)
+
+ggplot() + 
+  geom_line(aes(p_grid,posterior),stat="identity") +
+  theme_bw() + labs(x="probability of water", y = "posterior")
+```
+
+
+### Building a linear model
+
+Start with data from the rethinking package:
+
+```{r}
+data(Howell1)
+d <- Howell1
+str(d)
+```
+
+print 1st 10 rows of data frame: 
+
+```{r,echo=F, results='asis'}
+d.tab <- xtable(d,digits=c(0,2,2,2,0))
+align(d.tab) <- c("c","c","c","c","c")
+print(d.tab[1:10,],include.rownames=F,comment = F)
+```
+
+Ultimately we are going to build a model to predict height. So let's start by tidying up our data to do so. Age and and height are very correlated before adulthood, so let's remove anyone who is under the age of 18.
+
+```{r}
+d2 <- filter(d, age >= 18)
+```
+
+Plot a histogram of the heights:
+
+```{r, echo=F}
+ggplot(d2) + geom_histogram(aes(height), bins=20,color="white") + theme_bw()
+```
+
+Let's define our model for heights, ignoring predictors for a moment,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &\sim Normal(190.5,40)\\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+The prior for the mean of the heights distribution is 190.5 cm because that is how tall I am (why not), and the standard deviation of 20 cm basically allows for a large number of heights to serve as the mean value for the heights distribution. Let's plot our prior,
+
+```{r, echo=F}
+ggplot(data.frame(x = c(80, 300)), aes(x)) +
+  stat_function(fun = dnorm, args = list(mean = 190.5, sd = 40)) +
+  theme_bw() + labs(x=expression(mu), y="density")
+```
+
+The standard deviation prior is a bit more boring, but basically we are saying the standard deviation could be anything greater than zero but less than 50,
+
+```{r, echo=F}
+ggplot(data.frame(x = c(-10, 60)), aes(x)) +
+  stat_function(fun = dunif, args = list(min =0, max = 50)) +
+  theme_bw() + labs(x=expression(sigma), y="density")
+```
+
+We not have enough information to look at the prior for the heights themselves. This can be thought of as the plausible range of heights before the model has seen any data.
+
+```{r}
+sample_mu <- rnorm(1e4, 190.5, 40)
+sample_sigma <- runif(1e4, 0, 50)
+prior_h <- rnorm(1e4, sample_mu, sample_sigma)
+```
+
+```{r, echo=F}
+ggplot() + geom_histogram(aes(prior_h), bins=40,color="white") + theme_bw() + labs(x="prior distribution for heights")
+```
+
+Because we only have two parameters, we can use grid approximation one last time. Below I build one verbose for-loop which explains each step, and then follow it with a shorter `sapply` function that McElreath provided in his book.
+
+```{r, eval=F}
+# define grid of mean values for ML
+mu_grid <- seq(from=153, to=157, length.out=200)
+
+# define grid of stand. dev values for ML
+sigma_grid <- seq(from=6, to=9, length.out=200)
+
+# expand grids for every combination (200x200)
+parameter_grid <- expand.grid(mu=mu_grid, sigma=sigma_grid)
+
+# Calculate prior probabilities of parameters
+mu_prior <- log(dnorm(parameter_grid$mu, 190.5, 40))
+sigma_prior <- log(dunif(parameter_grid$sigma, 0, 50))
+
+# pre-allocate log likelihood
+log.likelihood <- numeric()
+for (i in 1:nrow(parameter_grid)) {
+  
+  # select height data
+  h <- d2$height
+  
+  # select one value of mu
+  mu <- parameter_grid$mu[i]
+  
+  # select corresponding value of sigma
+  sigma <- parameter_grid$sigma[i]
+  
+  # calculate the likelihood for every height value
+  likelihood_i <- dnorm(h, mean=mu, sd=sigma)
+  
+  # take the log of the likelihoods
+  log.likelihood_i <- log(likelihood_i)
+  
+  # sum the log likelihood. This returns one
+  # (log) likelihood value for the unique 
+  # combination of parameters indexed by "i"
+  log.likelihood[i] <- sum(log.likelihood_i)
+}
+
+# build posterior data frame
+posterior <- parameter_grid %>%
+  mutate(log.likelihood = log.likelihood, 
+         # multiply priors x LL (add because log)
+         numerator = log.likelihood + mu_prior + sigma_prior,
+         # find the max of the LL
+         denominator = max(numerator),
+         # normalize to largest LL value
+         prob = exp(numerator - denominator)) 
+```
+
+Below is a much faster version of the for-loop above that uses `sapply`,
+
+```{r}
+mu_grid <- seq(from=153, to=157, length.out=200)
+sigma_grid <- seq(from=6, to=9, length.out=200)
+posterior <- expand.grid(mu=mu_grid, sigma=sigma_grid)
+
+posterior$log.likelihood <- sapply(1:nrow(posterior), function(i) sum(dnorm(
+                                  d2$height,
+                                  mean=posterior$mu[i],
+                                  sd=posterior$sigma[i],
+                                  log=TRUE)))
+
+posterior$prod <- posterior$log.likelihood + 
+  dnorm(posterior$mu, 190.5, 40, TRUE) +
+    dunif(posterior$sigma, 0, 50, TRUE)
+
+posterior$prob <- exp(posterior$prod - max(posterior$prod))
+```
+
+```{r, echo=F, results='asis'}
+start <- which.max(posterior$prob)-5
+stop <- which.max(posterior$prob)+5
+
+p.tab <- xtable(posterior[start:stop,],digits=rep(3,6))
+align(p.tab) <- rep("c",6)
+print(p.tab[1:10,],include.rownames=F,comment = F)
+```
+
+We can tell from the table that the posterior distribution is maximized when $\mu=$ `r posterior$mu[which.max(posterior$prob)]` and $\sigma=$  `r posterior$sigma[which.max(posterior$prob)]`. This is a lot of work to regain the mean (`r mean(d2$height)`) and standard deviation (`r sd(d2$height)`) of a vector! In the future we will not deal with the posterior directly, but samples from the distribution. To sample from two parameters all we have to do is randomly sample the rows of posterior in proportion the the values in `posterior$prob`.
+
+```{r}
+post.samples <- sample(1:nrow(posterior), size=1e4, replace=T, prob=posterior$prob)
+sample.mu <- posterior$mu[post.samples]
+sample.sigma <- posterior$sigma[post.samples]
+```
+
+plot the samples and add contours,
+
+```{r, echo=F,fig.width=4, fig.height=4}
+ggplot() + geom_point(aes(sample.mu, sample.sigma), alpha=0.1, color="dodgerblue") + theme_bw() +
+  geom_density_2d(aes(sample.mu, sample.sigma), color="grey30")
+```
+
+We can also look at the marginal (averaged over the other parameter) density of each parameter,
+
+```{r, echo=F, fig.width=7, fig.height=3}
+mu_dens <- with(density(sample.mu), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+sigma_dens <- with(density(sample.sigma), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+mu.p <- ggplot(data=mu_dens, aes(x,y)) + geom_line() + theme_bw() + labs(x=expression(mu~samples),y="density")
+sigma.p <- ggplot(data=sigma_dens, aes(x,y)) + geom_line() + theme_bw() + labs(x=expression(sigma~samples),y="density")
+
+grid.arrange(mu.p, sigma.p, ncol=2)
+```
+
+and calculate the HPDI for parameter,
+
+```{r}
+HPDI(sample.mu)
+HPDI(sample.sigma)
+```
+
+One last thing before moving to MAP approximation. $\mu$ is often going to be normally distributed (with a normal prior and likelihood), but this is not true for $\sigma$. This is because $\sigma$ must be positive, so there is always more uncertainty about how big it is rather than how small (hence the longer right tail). We can show this by randomly sampling a small number of heights, and resampling the posterior for $\sigma$,
+
+```{r}
+d3 <- sample(d2$height, size=20)
+```
+
+```{r, echo=F}
+mu_grid <- seq(from=150, to=170, length.out=200)
+sigma_grid <- seq(from=4, to=20, length.out=200)
+posterior <- expand.grid(mu=mu_grid, sigma=sigma_grid)
+
+posterior$log.likelihood <- sapply(1:nrow(posterior), function(i) sum(dnorm(
+                                  d3,
+                                  mean=posterior$mu[i],
+                                  sd=posterior$sigma[i],
+                                  log=TRUE)))
+
+posterior$prod <- posterior$log.likelihood + 
+  dnorm(posterior$mu, 190.5, 40, TRUE) +
+    dunif(posterior$sigma, 0, 50, TRUE)
+
+posterior$prob <- exp(posterior$prod - max(posterior$prod))
+
+post.samples <- sample(1:nrow(posterior), size=1e4, replace=T, prob=posterior$prob)
+sample.mu <- posterior$mu[post.samples]
+sample.sigma <- posterior$sigma[post.samples]
+
+dens(sample.sigma, norm.comp = T)
+```
+
+We can see it's not really Gaussian.
+
+### Using Maximum a posteriori (MAP)
+
+Rather than grid approximation, we will use the quadratic approximation to get an idea of the shape of the distribution at its peak. It is similar to grid approximation in that MAP finds the posterior probability for every combination of parameter values and then climbs the posterior distribution to the peak. Let's start by reloading the data and redefining our model.
+
+
+```{r}
+data(Howell1)
+d <- Howell1
+d2 <- filter(d, age >= 18)
+```
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &\sim Normal(190.5,40)\\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+Let's translate the model description above into a formula list (`flist`):
+
+```{r}
+flist <- alist(
+    height ~ dnorm(mu, sigma),
+    mu ~ dnorm(190.5, 40),
+    sigma ~ dunif(0, 50)
+)
+```
+
+We can now fit the model to the data frame `d2` and look at the output,
+
+```{r}
+# fit the MAP model
+m1 <- map(flist,data=d2)
+
+# summarize output
+precis(m1)
+```
+
+The output provides the Gaussian approximation for each of the parameters marginal distribution. Let's change the prior for $\mu$ to something stronger and see how it changes the output. Below I change the standard deviation of the prior for $\mu$ from 40 to 0.1.
+
+```{r}
+# fit the MAP model
+m2 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu ~ dnorm(190.5, 0.1),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+
+# summarize output
+precis(m2)
+```
+
+Notice that the posterior for $\mu$barely moved off the prior. Also note that the posterior for $\sigma$ changed as well, even though we didn't change it's prior. That is because the posterior for $\sigma$ depends on the posterior for $\mu$. We can think of the prior as being the posterior of some other analysis. We can actually calculate how much "data" was used to construct this hypothetical posterior if the distribution is Gaussian: $\sigma_{post} = 1 / \sqrt{n}$, so we can rearrange this, $n = 1/ \sigma^2_{post}$, and plug in our standard deviation for the prior, $n=1/0.1^2=100$. So our prior is effectively telling the model that we have 100 previous data points where the height was 190.5 cm. 
+
+### sampling from MAP
+
+Just like the mean and variance is sufficient to describe a Gaussian distribution, a joint (multi-dimensional) distribution can be fully described by a list of means, variances, and covariances. Let's look at the covariance matrix for our original joint distribution.
+
+```{r}
+vcov(m1)
+```
+
+We can decompose this covariance matrix into a vector of variances (for the posterior of each parameter), and a correlation matrix that describes how changes in one parameter lead to correlated changes in other parameters.
+
+```{r}
+diag(vcov(m1))
+cov2cor(vcov(m1))
+```
+
+As we would expect, $\mu$ and $\sigma$ are not correlated. Now that we all the information we need for the joint posterior distribution, we can sample like we did earlier.
+
+```{r}
+posterior <- extract.samples(m1, n=1e4)
+```
+
+This returns a data frame with a column of $\mu$ values and $\sigma$ values. We can plot it like before:
+
+```{r, echo=F,fig.width=5, fig.height=4}
+ggplot(posterior) + geom_point(aes(mu, sigma), alpha=0.1, color="dodgerblue") + theme_bw() +
+  geom_density_2d(aes(mu, sigma), color="grey30")
+```
+
+A quick aside about estimating $\sigma$. We can improve the estimate by replacing $\sigma$ with $log(\sigma)$. This helps because the $log(\sigma)$ is often closer to normally distributed. This is how it would look in R:
+
+```{r, eval=F}
+m <- map(
+      alist(
+        height ~ dnorm(mu, exp(log_sigma)),
+        mu ~ dnorm(190.5, 0.1),
+        log_sigma ~ dnorm(2,10)
+      ),
+    data=d2)
+
+# extract sigma and exponentiate
+posterior <- extract.samples(m)
+sigma <- exp(posterior$log_sigma)
+```
+
+Notice that `exp(log_sigma)` guarantees a positive value, so we can use a normal prior distribution for `log_sigma` rather than a uniform. This won't matter much now, but will come up later.
+
+### Adding a predictor
+
+Now it is time to add a predictor. We are going to see how much height covaries with weight.
+
+```{r, echo=F}
+ggplot(d2) + geom_point(aes(weight, height), shape=21) + theme_bw()
+```
+
+
+McElreath has a nice description of linear models on page 92. I do not copy it here, but it's worth reading. The first step is to define our model. If $h_i$ equals the height of an individual, and $x_i$ equals the weight, then:
+
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta x_i \\
+\alpha &\sim Normal(190.5,100) \\
+\beta &\sim Normal(0,10) \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+The first line is the likelihood. The height of an individual is drawn from a normal distribution, where the mean of the distribution is dependent on each row (i.e., $i$), which is shown by the linear model on the second line. Notice that the linear model represents a deterministic relationship as indicated by the $=$ rather than the ~ sign. This means that once we know $\alpha$, $\beta$, and $x_i$, we know $\mu_i$. The parameters $\alpha$ and $\beta$ allow $\mu_i$ to vary systematically accross all the data. Let's think about what $\mu_i = \alpha + \beta x_i$ is really asking. We want to know what is the expected height when weight is equal to zero ($\alpha$), and what is the expected change in height when weight changes by one unit ($\beta$). Said another way, we want to model to find a line that passes through $\alpha$ when weight is zero, and has a slope $\beta$. The last thing we have to do in describing our model is assign priors to all of the other parameters. Now we modify our MAP code above to incorporate the linear model.
+
+```{r}
+# fit the MAP model
+lm1 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+```
+
+If we would rather, we can also specify the linear model directly into the normal distribution for height:
+
+```{r, eval=F}
+# fit the MAP model
+lm1 <- map(
+      alist(
+        height ~ dnorm(a + b*weight, sigma),
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+```
+
+
+We can now extract information about the posterior distribution of the parameters.
+
+```{r, echo=F, results='asis'}
+tab <- xtable(precis(lm1, corr=T)@output,digits=rep(2,8))
+align(tab) <- rep("c",8)
+print(tab,include.rownames=T,comment = F)
+```
+
+The table is pretty self explanatory. The `corr=T` argument just returns the same thing we would have gotten from `cov2cor(vcov(lm1))`. It jsut shows us that $\beta$ and $\alpha$ are almost perfectly negatively correlated. This just means that if we change the slope in the line, the intercept changes to match it (the parameters carry the same information). It is harmless at this point, but with more complicated models, it can make model fitting difficult. If we center the predictor before running the model, then we can interpret $\alpha$ to be the expected height when weight is equal to it's mean value.
+
+```{r}
+
+d2 <- d2 %>% mutate(weight_c=weight-mean(weight))
+
+# fit the MAP model
+lm1.c <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight_c,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(precis(lm1.c, corr=T)@output,digits=rep(2,8))
+align(tab) <- rep("c",8)
+print(tab,include.rownames=T,comment = F)
+```
+
+Now the intercept has more meaning (the mean of height). Below plot the (uncentered) MAP point estimates over our data:
+
+```{r, echo=F}
+ggplot(d2) + geom_point(aes(weight, height), shape=21) + theme_bw() +
+  geom_abline(intercept = coef(lm1)["a"], slope=coef(lm1)["b"], color="dodgerblue", size=1)
+```
+
+The MAP line is the least squares estimate, the same thing you would get from using `lm` in R. It represents the most plausible line in the infinite universe of possible lines. Let's include some of our uncertainty to the estimates. We can sample from the posterior distribution (because we have the means and the covariance matrix):
+
+```{r}
+posterior <- extract.samples(lm1, n=1e4)
+```
+
+Below is just the first 10 rows of the `posterior` data frame. Each row is a correlated random sample from the joint posterior distribution of all three paramerts. If we were to average all of the `a`s and `b`s, we would regain the MAP line. 
+
+```{r, echo=F, results='asis'}
+tab <- xtable(posterior[1:10,],digits=rep(2,4))
+align(tab) <- rep("c",4)
+print(tab,include.rownames=T,comment = F)
+```
+
+The implications of this is easier to grasp if we first build a model using only a subset of 10 data points.
+
+```{r}
+# randomly subset 10 samples
+d_sub <- sample_n(d2,10)
+
+# fit the MAP model
+lm1_sub <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d_sub)
+
+# extract 20 samples
+posterior_sub <- extract.samples(lm1_sub, n=20)
+```
+
+
+```{r, echo=F}
+ggplot(d_sub) + geom_abline(intercept = posterior_sub$a, slope=posterior_sub$b, color="dodgerblue", alpha=0.5) +
+  geom_point(aes(weight, height), shape=21) + theme_bw() + ggtitle("N=10")
+```
+
+There is alot of uncertainty about where exactly the line is, but it definately has a positive slope. Let's subset the data again, but this time using 100 observations.
+
+```{r, echo=F}
+# randomly subset 10 samples
+d_sub <- sample_n(d2,100)
+
+# fit the MAP model
+lm1_sub <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d_sub)
+
+# extract 20 samples
+posterior_sub <- extract.samples(lm1_sub, n=20)
+```
+
+
+```{r, echo=F}
+ggplot(d_sub) + geom_abline(intercept = posterior_sub$a, slope=posterior_sub$b, color="dodgerblue", alpha=0.5) +
+  geom_point(aes(weight, height), shape=21) + theme_bw() + ggtitle("N=100")
+```
+
+And now for the full dataset:
+
+```{r, echo=F}
+posterior <- extract.samples(lm1, n=20)
+ggplot(d2) + geom_abline(intercept = posterior$a, slope=posterior$b, color="dodgerblue", alpha=0.5) +
+  geom_point(aes(weight, height), shape=21) + theme_bw() + ggtitle("N=352")
+```
+
+If we recall that $h_i ~ Normal(\mu_i = \alpha + \beta x_i, \sigma)$, then we reframe our uncertainty as just possible values of mean values of height ($\mu_i$) for a given weight ($x_i$). For example, the distribution of possible mean values of height when weight is 50 kilograms, is computed by,
+
+```{r}
+# extract 10,000 samples from the posteriors
+posterior <- extract.samples(lm1, n=1e4)
+
+# select 50 kilograms
+xi <- 50
+
+# calculate a distribution of mu values
+mu_at_50 <- posterior$a + posterior$b * xi
+```
+
+```{r, echo=F}
+mu_at_50_dens <- with(density(mu_at_50), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+ggplot(data=mu_at_50_dens, aes(x,y)) + geom_line() + theme_bw() + labs(x=expression(mu~samples),y="density")
+```
+
+So when weight is equal to 50 kilograms, the average height is somewhere between 158 and 160 (we can get more specific using functions like `HPDI`.) Now we want to repeat the above process for every weight value. We could do this using a custom function, but for now let's use the `link` function from the `rethinking` package. The `mu` below is a matrix of where each column is a distribution 
+of 1000 mean height values for each weight value.
+
+```{r,results='hide'}
+mu <- link(lm1)
+```
+
+We actually only need the distribution of mean height values for each unique weight value. 
+
+```{r,results='hide'}
+# create sequence of weight values
+weight.seq <- round(seq(min(d2$weight)-5, max(d2$weight)+5,1),0)
+
+# calculate mu distributions for each
+mu <- link(lm1, data=data.frame(weight=weight.seq))
+
+# summarize mu
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI, prob=0.89)
+```
+
+```{r, echo=F}
+ggplot() + geom_point(aes(d2$weight, d2$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.4) +
+  labs(x="weight",y="height")
+```
+
+So far we have just shown the uncertainty in $\mu$. Although, if we again recall that $h_i ~ Normal(\mu_i = \alpha + \beta x_i, \sigma)$, we have not incorporated the uncertainty *around* $\mu$ from the likelihood. We have not incorporated $\sigma$. As we have it plotted now, the grey shaded region only shows the 89% HPDI around $\mu$. In order to capture all of the uncertainty, let's now include the fact that $h_i$ varies stochasitcally around $\mu$ as defined by $\sigma$. In order to do that, all we have to do is simulate heights from our model for each weight value.
+
+```{r,results='hide'}
+sim.height <- sim(lm1, data=list(weight=weight.seq), n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+ggplot() + geom_point(aes(d2$weight, d2$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```
+
+The dark grey shaded region is the uncertainty associated with just the parameters of the linear model, and the light grey shaded region represents the sampling uncertainty from the Gaussian likelihood (where the model expects to find 89% of the heights for a given weight). 
+
+### Polynomial regression
+
+In this section we will build a polynomial regression using the weights and heights from the full dataset (i.e., include all ages in the model).
+
+```{r, echo=F}
+data(Howell1)
+d <- Howell1
+
+ggplot(d) + geom_point(aes(weight, height), shape=21) + theme_bw()
+```
+
+We now see there is a curve(s) in the relationship between weight and height. We can model this by adding an additional parameter to our model specification,
+
+$$
+\mu_i = \alpha + \beta_1 x_i + \beta_2 x_i^2
+$$
+
+Now the mean is defined as a second order polynomial. Before building the model, we should first scale `weight`,
+
+```{r}
+# scale weight
+d$weight.s <- (d$weight-mean(d$weight))/sd(d$weight)
+
+# add second order term
+d$weight.s2 <- d$weight.s^2
+```
+
+Now we can fit, summarize, and plot the model:
+
+```{r}
+# fit the MAP model
+lm2 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b1*weight.s + b2*weight.s2,
+        a ~ dnorm(190.5,100),
+        b1 ~ dnorm(0,10),
+        b2 ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d)
+
+# extract 20 samples
+precis(lm2, corr=T)
+```
+
+```{r,results='hide'}
+# create sequence of scaled weight values
+weight.seq <- seq(min(d$weight.s)-0.1, max(d$weight.s)+0.1,0.1)
+
+# create list of data to predict
+pred_data <- list(weight.s = weight.seq, weight.s2 <- weight.seq^2)
+
+# summarize mu
+mu <- link(lm2, data=pred_data)
+mu.mean <- apply(mu,2,mean)
+mu.PI <- apply(mu,2,PI,prob=0.89)
+
+# summarize the sampling variance
+sim.height <- sim(lm2, data=pred_data, n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+ggplot() + geom_point(aes(d$weight.s, d$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```
+
+If we wanted to add a third order polynomial, we would just add that parameter to the mean.
+
+$$
+\mu_i = \alpha + \beta_1 x_i + \beta_2 x_i^2 + \beta_3 x_i^3 
+$$
+
+
+### Homework
+
+**(4M1)**
 
