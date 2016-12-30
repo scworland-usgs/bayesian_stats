@@ -29,7 +29,7 @@ pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr
 This file contains text, R scripts and stan model code detailing elements of statistical model design. The scripts and ideas in this repository directly follow Richarch Mcelreath's [Statistical Rethinking](http://xcelab.net/rm/statistical-rethinking/) book and lectures. My approach to statistical modelling is philosophically driven. Motivation can be found [here](https://www.marxists.org/reference/subject/philosophy/works/us/taylor.htm) and [here](http://redpenblackpen.tumblr.com/image/142282350107).
 
 
-## Statistical Rethinking Chapter 1
+## SR Chapter 1: Intro to models
 
 * The continuous version of discrete logic is Bayesian inference
 * Bayesian inference: (1) nominate all the things that could happen according to our assumptions (prior), (2) look at what did happen (model), and (3) see which "path" from our nominations is the most consistent with what happened (data)
@@ -50,7 +50,7 @@ This file contains text, R scripts and stan model code detailing elements of sta
  
 * small world ---> models, large world ---> real world
 
-## Statistical Rethinking Chapter 2
+## SR Chapter 2: more intro to models
 
 + Prior to fitting a model to the data, it is important to build a data story. It is fine to abandon this data story in the future, but it aids in model building
 + Every model pays for its lunch with its assumptions. For a Bayesian, it's the prior, for a frequentists, its the estimator.
@@ -612,7 +612,7 @@ $$
 
 + This last value can be interpreted as, "Given a panda that had twins, then a single offspring, then returned positive for test=A, there is a 56% chance that the panda is from species A." Notice how the posterior probabilities updated with each new piece of information.
 
-## Statistical Rethinking Chapter 3
+## SR Chapter 3: Sampling
 
 This chapter deals with sampling from a posterior distribution. This is something I am already familiar with so I just touch on the examples here.
 
@@ -1192,7 +1192,7 @@ ggplot(d) + geom_bar(aes(b, Freq),stat="identity", width=0.2) +
 ```
 
 
-## Statistical Rethinking Chapter 4
+## SR Chapter 4: Linear models
 
 This chapter begins with some cool stuff about the Gaussian distribution and why it arises so much in nature (central limit theorem). I am skipping over a lot of that material here, but below are some interesting take-aways.
 
@@ -1315,7 +1315,7 @@ ggplot(data.frame(x = c(-10, 60)), aes(x)) +
   theme_bw() + labs(x=expression(sigma), y="density")
 ```
 
-We not have enough information to look at the prior for the heights themselves. This can be thought of as the plausible range of heights before the model has seen any data.
+We have enough information to look at the prior for the heights themselves. This can be thought of as the plausible range of heights before the model has seen any data.
 
 ```{r}
 sample_mu <- rnorm(1e4, 190.5, 40)
@@ -1532,7 +1532,7 @@ m2 <- map(
 precis(m2)
 ```
 
-Notice that the posterior for $\mu$barely moved off the prior. Also note that the posterior for $\sigma$ changed as well, even though we didn't change it's prior. That is because the posterior for $\sigma$ depends on the posterior for $\mu$. We can think of the prior as being the posterior of some other analysis. We can actually calculate how much "data" was used to construct this hypothetical posterior if the distribution is Gaussian: $\sigma_{post} = 1 / \sqrt{n}$, so we can rearrange this, $n = 1/ \sigma^2_{post}$, and plug in our standard deviation for the prior, $n=1/0.1^2=100$. So our prior is effectively telling the model that we have 100 previous data points where the height was 190.5 cm. 
+Notice that the posterior for $\mu$ barely moved off the prior. Also note that the posterior for $\sigma$ changed as well, even though we didn't change it's prior. That is because the posterior for $\sigma$ depends on the posterior for $\mu$. We can think of the prior as being the posterior of some other analysis. We can actually calculate how much "data" was used to construct this hypothetical posterior if the distribution is Gaussian: $\sigma_{post} = 1 / \sqrt{n}$, so we can rearrange this, $n = 1/ \sigma^2_{post}$, and plug in our standard deviation for the prior, $n=1/0.1^2=100$. So our prior is effectively telling the model that we have 100 previous data points where the height was 190.5 cm. 
 
 ### sampling from MAP
 
@@ -1643,19 +1643,24 @@ print(tab,include.rownames=T,comment = F)
 The table is pretty self explanatory. The `corr=T` argument just returns the same thing we would have gotten from `cov2cor(vcov(lm1))`. It jsut shows us that $\beta$ and $\alpha$ are almost perfectly negatively correlated. This just means that if we change the slope in the line, the intercept changes to match it (the parameters carry the same information). It is harmless at this point, but with more complicated models, it can make model fitting difficult. If we center the predictor before running the model, then we can interpret $\alpha$ to be the expected height when weight is equal to it's mean value.
 
 ```{r}
-
 d2 <- d2 %>% mutate(weight_c=weight-mean(weight))
 
 # fit the MAP model
 lm1.c <- map(
-      alist(
-        height ~ dnorm(mu, sigma),
-        mu <- a + b*weight_c,
-        a ~ dnorm(190.5,100),
-        b ~ dnorm(0,10),
-        sigma ~ dunif(0, 50)
-      ),
-    data=d2)
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + b*weight_c,
+    a ~ dnorm(0,100),
+    b ~ dnorm(0,10),
+    sigma ~ dunif(0, 50)
+  ),
+  data=d2,
+  start = list(
+    a=mean(d2$height),
+    b=0,
+    sigma=sd(d2$height)
+  )
+)
 ```
 
 ```{r, echo=F, results='asis'}
@@ -1693,14 +1698,20 @@ d_sub <- sample_n(d2,10)
 
 # fit the MAP model
 lm1_sub <- map(
-      alist(
-        height ~ dnorm(mu, sigma),
-        mu <- a + b*weight,
-        a ~ dnorm(190.5,100),
-        b ~ dnorm(0,10),
-        sigma ~ dunif(0, 50)
-      ),
-    data=d_sub)
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + b*weight,
+    a ~ dnorm(190.5,100),
+    b ~ dnorm(0,10),
+    sigma ~ dunif(0, 50)
+  ),
+  data=d_sub,
+  start = list(
+    a=mean(d_sub$height),
+    b=0,
+    sigma=sd(d_sub$height)
+  )
+  )
 
 # extract 20 samples
 posterior_sub <- extract.samples(lm1_sub, n=20)
@@ -1747,7 +1758,7 @@ ggplot(d2) + geom_abline(intercept = posterior$a, slope=posterior$b, color="dodg
   geom_point(aes(weight, height), shape=21) + theme_bw() + ggtitle("N=352")
 ```
 
-If we recall that $h_i ~ Normal(\mu_i = \alpha + \beta x_i, \sigma)$, then we reframe our uncertainty as just possible values of mean values of height ($\mu_i$) for a given weight ($x_i$). For example, the distribution of possible mean values of height when weight is 50 kilograms, is computed by,
+If we recall that $h_i \sim Normal(\mu_i = \alpha + \beta x_i, \sigma)$, then we reframe our uncertainty as just possible values of mean values of height ($\mu_i$) for a given weight ($x_i$). For example, the distribution of possible mean values of height when weight is 50 kilograms, is computed by,
 
 ```{r}
 # extract 10,000 samples from the posteriors
@@ -1795,7 +1806,7 @@ ggplot() + geom_point(aes(d2$weight, d2$height), shape=21) + theme_bw() +
   labs(x="weight",y="height")
 ```
 
-So far we have just shown the uncertainty in $\mu$. Although, if we again recall that $h_i ~ Normal(\mu_i = \alpha + \beta x_i, \sigma)$, we have not incorporated the uncertainty *around* $\mu$ from the likelihood. We have not incorporated $\sigma$. As we have it plotted now, the grey shaded region only shows the 89% HPDI around $\mu$. In order to capture all of the uncertainty, let's now include the fact that $h_i$ varies stochasitcally around $\mu$ as defined by $\sigma$. In order to do that, all we have to do is simulate heights from our model for each weight value.
+So far we have just shown the uncertainty in $\mu$. Although, if we again recall that $h_i \sim Normal(\mu_i = \alpha + \beta x_i, \sigma)$, we have not incorporated the uncertainty *around* $\mu$ from the likelihood. We have not incorporated $\sigma$. As we have it plotted now, the grey shaded region only shows the 89% HPDI around $\mu$. In order to capture all of the uncertainty, let's now include the fact that $h_i$ varies stochasitcally around $\mu$ as defined by $\sigma$. In order to do that, all we have to do is simulate heights from our model for each weight value.
 
 ```{r,results='hide'}
 sim.height <- sim(lm1, data=list(weight=weight.seq), n=1000)
@@ -1893,4 +1904,1174 @@ $$
 ### Homework
 
 **(4M1)**
+Simulate observed y values from the prior using the model specification below.
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu,\sigma) \\
+\mu &\sim Normal(0,10) \\
+\sigma &\sim Uniform(0,10)
+\end{aligned}
+$$
+
+
+```{r}
+sample_mu <- rnorm(1e4, 0, 10)
+sample_sigma <- runif(1e4, 0, 10)
+prior_y <- rnorm(1e4, sample_mu, sample_sigma)
+```
+
+```{r, echo=F}
+ggplot() + geom_histogram(aes(prior_y), color="white") + theme_bw()
+```
+
+**(4M2)**
+
+Translate the model formula above into a MAP formula:
+
+```{r, eval=F}
+m <- map(
+      alist(
+        y ~ dnorm(mu, sigma),
+        mu ~ dnorm(0,10),
+        sigma ~ dunif(0,10)
+      ))
+```
+
+**(4M3)**
+
+Translate the MAP formula below into a mathematical model definition:
+
+```{r, eval=F}
+flist<- alist(
+  y ~ dnorm(mu, sigma),
+  mu <- a + b*x,
+  a ~ dnorm(0,50),
+  b ~ dunif(0,10)
+  sigma ~ dunif(0,50)
+)
+```
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu,\sigma) \\
+\mu &= \alpha + \beta x_i \\
+\alpha &\sim Normal(0,50) \\
+\beta &\sim Uniform(0,10) \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+**(4M3)**
+
+See the book for the question. If $h_i$ is height (in inches) for student $i$, and $x_i$ is the year where height is measured, the mathematical formula could look like,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &= \alpha + \beta x_i \\
+\alpha &\sim Normal(40,20) \\
+\beta &\sim Uniform(0,10)  \\
+\sigma &\sim Uniform(0,15)
+\end{aligned}
+$$
+
+**(4H1)**
+Predict the heights and 89% HPDI for the following weights:
+
+```{r, results='hide'}
+# new weights
+weights <- c(46.95,43.72,64.78,32.59,54.63)
+
+# load the data
+data(Howell1)
+d <- Howell1
+d2 <- filter(d, age >= 18)
+
+# fit the MAP model
+lm1 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+
+# extract samples
+posterior <- extract.samples(lm1,n=1e4)
+
+# for the first weight, this is what we want to do
+mean(rnorm(1e4,posterior$a + weights[1]*posterior$b, posterior$sigma))
+
+# use sim function and apply 
+heights <- sim(lm1, data=data.frame(weight=weights),1e4) 
+heights.mu <- apply(heights,2, mean)
+heights.HPDI <- apply(heights,2, HPDI, prob=0.89)
+
+# print
+heights.mu
+heights.HPDI
+```
+
+**(4H1)**
+Select the rows where ages are below 18:
+
+```{r}
+d3 <- filter(d, age < 18)
+```
+
+(a) Fit a linear regression using MAP. For every 10 unit increase in weight, how much taller does the child get?
+
+```{r}
+# fit the MAP model
+lm18 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(100,50),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d3)
+
+# print summary
+precis(lm18)
+```
+
+For every 10 kg a child grows 27.2 cm.
+
+(b) plot the raw data with 89% HPDI for both the mean and the predictions:
+
+```{r,results='hide'}
+# extract samples
+post.d3 <- extract.samples(lm18,n=1e4)
+
+# define a weight sequence
+weight.seq <- round(seq(min(d3$weight)-5, max(d3$weight)+5,1),0)
+
+# calculate 89% HPDI around mean
+mu <- link(lm18, data=data.frame(weight=weight.seq))
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# calculate 89% HPDI around predictions
+sim.height <- sim(lm18, data=list(weight=weight.seq), n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+# plot everything
+ggplot() + geom_point(aes(d3$weight, d3$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```
+
+**(4H3)**
+Fit the model using all of the dataset but using the natural log of weight.
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &= \alpha + \beta ln(x_i) \\
+\alpha &\sim Normal(40,20) \\
+\beta &\sim Normal(0,100)  \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+```{r}
+# add ln(weight) to data frame
+d$ln.weight <- log(d$weight)
+
+# fit the MAP model
+lm.ln <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*ln.weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d)
+
+# print summary
+precis(lm.ln)
+```
+
+```{r,results='hide'}
+# extract samples
+post.ln <- extract.samples(lm.ln,n=1e4)
+
+# define a weight sequence
+weight.seq <- seq(min(d$ln.weight)-0.1, max(d$ln.weight)+0.1,0.1)
+
+# calculate 89% HPDI around mean
+mu <- link(lm.ln, data=data.frame(ln.weight=weight.seq))
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# calculate 89% HPDI around predictions
+sim.height <- sim(lm.ln, data=list(ln.weight=weight.seq), n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+# plot everything
+ggplot() + geom_point(aes(d$ln.weight, d$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="ln(weight)",y="height")
+```
+
+```{r, echo=F}
+# untransform x axis for plotting
+weight.seq <- seq(min(d$ln.weight)-0.1, max(d$ln.weight)+0.1,0.1)
+weight.seq <- exp(weight.seq)
+
+# plot everything
+ggplot() + geom_point(aes(d$weight, d$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```
+
+## SR Chapter 5: Multivariate linear models
+
+* Correlation in nature is very common
+* Multivariate linear models help us tease apart causation
+* " " help control for *confounds*, where one variable seems important because it's actually correlated with someothing of interest (spurious correlation)
+* " " help find multiple causation
+* " " help find interactions
+
+### Example with divorce rate
+
+I am not a huge fan of this data, but for fear that it will come up later in the book, I opted to use it. If I teach a class on this I will use some sort of hydrological data.
+
+```{r}
+data(WaffleDivorce)
+d <- WaffleDivorce
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(d[1:10,c(1,7,4,5)])
+print(tab,include.rownames=F,comment = F)
+```
+
+The question we want to answer with a multivariate model is *what is the predictive value of a variable, once I already know all of the other predictor variables?* For the above data, we are asking, "After I already know the marriage rate, what additional value of knowing the age at marriage?" And the reverse of that. Below is the multivariate linear model for predicting divorce rate using median age of marriage ($A$) and marriage rate ($M$):
+
+$$
+\begin{aligned}
+D_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_M M_i + \beta_A A_i \\
+\alpha &\sim Normal(10,10) \\
+\beta_M &\sim Normal(0,1)  \\
+\beta_A &\sim Normal(0,1)  \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+The bulk of the model is captured by $\mu = \alpha + \beta_M M_i + \beta_A A_i$. The $+$ sign is effectively saying that *the divorce rate in a state is a function of its marriage rate or its median age at marriage.* We can also write this using more compact notation:
+
+$$
+\mu_i = \alpha + \sum_{j=1}^n \beta_j x_{ji}
+$$ 
+
+or even more compact:
+
+$$
+\mathbf{m} = \mathbf{Xb}
+$$
+
+where $\mathbf{m}$ is the predicted means, $\mathbf{b}$ is a column vector of parameters, and $\mathbf{X}$ is the design matrix.
+
+
+Fit the model in R,
+
+```{r,fig.height=3}
+# standardize the predictors
+d <- d %>%
+  mutate(mar.s = scale(Marriage),
+         age.s = scale(MedianAgeMarriage))
+
+# fit the MAP model
+m5.1 <- map(
+  alist(
+    Divorce ~ dnorm(mu, sigma),
+    mu <- a + bm*mar.s + ba*age.s,
+    a ~ dnorm(10,10),
+    bm ~ dnorm(0,1),
+    ba ~ dnorm(0,1),
+    sigma ~ dunif(0, 50)
+  ),
+  data=d)
+
+# print summary
+precis(m5.1)
+plot(precis(m5.1))
+```
+
+We can interpret these estimates as, *Once we know the median age of marriage for a state, there is little additional predictive power in also knowing the rate of marriage in that state.* The posterior distributions for multivariate models are harder to visualize than for bivariate models. Several examples are below.
+
+**Predictor residual plots**
+
+We can make a predictor the response variable for a model using the other predictors, and then use the residuals from that model as the predictor for actual response variable (e.g., divorce rate). Below is an example using marriage rate.
+
+$$
+\begin{aligned}
+M_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta A_i \\
+\alpha &\sim Normal(0,10) \\
+\beta &\sim Normal(0,1)  \\
+\sigma &\sim Uniform(0,10)
+\end{aligned}
+$$
+
+
+Fit the model in R,
+
+```{r}
+# fit the MAP model
+m5.2 <- map(
+  alist(
+    mar.s ~ dnorm(mu, sigma),
+    mu <- a + b*age.s,
+    a ~ dnorm(0,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# calcualte predictions
+mu <- coef(m5.2)['a'] + coef(m5.2)['b']*d$age.s
+
+# calculate residuals
+mar.resid <- d$mar.s - mu
+```
+
+```{r, echo=F}
+ggplot(d, aes(age.s,mar.s)) + geom_point() +
+  geom_segment(aes(xend = age.s, yend = mu), color="black") +
+  geom_abline(intercept=coef(m5.2)['a'], slope=coef(m5.2)['b']) +
+  theme_bw()
+```
+
+The residuals are the left over variation in marriage rate that isn't explained by the median age of mariage. States with positive residuals have a higher marriage rate for their age of marriage, while negative residuals indicate states that have a lower marriage rate for their age of marriage. Now we want to see if the left over variation in marriage rates can explain variance in divorce rate. Said another way, we want to see if marriage rates can predict divorce rates after we control for the median age of marriage.
+
+```{r}
+# add the residual for marriage rate
+d$mar.resid <- mar.resid
+
+# fit the MAP model
+m5.3 <- map(
+  alist(
+    Divorce ~ dnorm(mu, sigma),
+    mu <- a + b*mar.resid,
+    a ~ dnorm(10,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# extract coefficients
+precis(m5.3)
+```
+
+
+Now we can do the same thing for median age at marriage and plot both.
+
+```{r, echo=F,results='hide'}
+# define a weight sequence
+mar.resid.seq <- seq(min(d$mar.resid)-0.5, max(d$mar.resid)+0.5,0.1)
+
+# calculate 89% HPDI around mean
+mu <- link(m5.3, data=data.frame(mar.resid=mar.resid.seq),n=1000)
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# plot
+ggplot() + geom_point(aes(d$mar.resid, d$Divorce), shape=21) + theme_bw() +
+  geom_line(aes(mar.resid.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=mar.resid.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  labs(x="marriage rate residuals",y="divorce rate")
+
+# fit the MAP model
+m5.4 <- map(
+  alist(
+    age.s ~ dnorm(mu, sigma),
+    mu <- a + b*mar.s,
+    a ~ dnorm(0,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# calcualte predictions
+mu <- coef(m5.4)['a'] + coef(m5.4)['b']*d$mar.s
+
+# add the residual for median age
+d$age.resid <- d$age.s - mu
+
+# fit the MAP model
+m5.5 <- map(
+  alist(
+    Divorce ~ dnorm(mu, sigma),
+    mu <- a + b*age.resid,
+    a ~ dnorm(10,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# define a weight sequence
+age.resid.seq <- seq(min(d$age.resid)-0.5, max(d$age.resid)+0.5,0.1)
+
+# calculate 89% HPDI around mean
+mu <- link(m5.5, data=data.frame(age.resid=age.resid.seq),n=1000)
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# plot
+ggplot() + geom_point(aes(d$age.resid, d$Divorce), shape=21) + theme_bw() +
+  geom_line(aes(age.resid.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=age.resid.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  labs(x="median marriage age residuals",y="divorce rate")
+```
+
+The plots suggest that there is a lot of value in knowing median age of marriage after we know marriage rate, but knowing marriage rate after controlling for age of marriage doesn't provide much information.
+
+**Counterfactual plots**
+ 
+A counterfactual plot allows us to see how the predictions change as we change only one predictor at a time (holding the value of the other predictors constant). This is similar to a partial dependence function. We are not concerned with combination of predictors that are "realistic", but we want to understand the implication of certian predictors.
+
+```{r,results='hide'}
+# prepare counterfactual data
+a.avg <- mean(d$age.s) # ~0 because scaled
+m.seq <- seq(from=-3, to=3, length.out = 30)
+pred.data <- data.frame(mar.s=m.seq, 
+                        age.s=a.avg)
+
+# compute counterfactual mean divorce
+mu <- link(m5.1, data=pred.data)
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu,2,PI)
+
+# simulate counterfactual divorce outcomes
+m.sim <- sim(m5.1, data=pred.data, n=1e4)
+m.PI <- apply(m.sim, 2, PI)
+```
+
+```{r, echo=F}
+ggplot() + geom_line(aes(m.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=m.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=m.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
+  labs(x="scaled marriage rate",y="divorce rate") +
+  ggtitle("scaled median age at marriage = 0") + theme_bw()
+```
+
+```{r,results='hide'}
+# prepare counterfactual data
+m.avg <- mean(d$mar.s) # ~0 because scaled
+a.seq <- seq(from=-3, to=3.5, length.out = 30)
+pred.data <- data.frame(age.s=a.seq, 
+                        mar.s=m.avg)
+
+# compute counterfactual mean divorce
+mu <- link(m5.1, data=pred.data)
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu,2,PI)
+
+# simulate counterfactual divorce outcomes
+m.sim <- sim(m5.1, data=pred.data, n=1e4)
+m.PI <- apply(m.sim, 2, PI)
+```
+
+```{r, echo=F}
+ggplot() + geom_line(aes(a.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=a.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=a.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
+  labs(x="scaled median age at marriage rate",y="divorce rate") +
+  ggtitle("scaled marriage rate = 0") + theme_bw()
+```
+
+
+**Posterior prediction plots**
+
+These are pretty straight forward. Make predictions using original data, and plot.
+
+```{r, results='hide'}
+# make predictions
+mu <- link(m5.1)
+
+# summarize samples
+mu.mean <- apply(mu,2,mean)
+mu.PI <- apply(mu,2,PI)
+
+# simulate observations
+divorce.sim <- sim(m5.1, n=1e4)
+divorce.PI <- apply(divorce.sim,2,PI)
+
+plot.data <- data.frame(x=d$Divorce,
+                        y=mu.mean,
+                        low=mu.PI[1,],
+                        high=mu.PI[2,],
+                        state=d$Loc)
+```
+
+Plot results and label states with large residuals:
+
+```{r, echo=T}
+ggplot(plot.data, aes(x=x, y=y)) + 
+  geom_pointrange(aes(ymin=low, ymax=high), shape=21, fill="dodgerblue") +
+  geom_text(data=filter(plot.data, abs(x-y)>2.3), aes(label=state),nudge_x = -0.5) +
+  geom_abline(intercept=0,slope=1,linetype="dashed") +
+  theme_bw() + labs(x="observed divorce", y= "predicted divorce")
+```
+
+Plot ordered residuals:
+
+```{r, echo=T, fig.height=7}
+
+plot.data2 <- plot.data %>% 
+  mutate(resid=x-y,
+         resid.low=x-low,
+         resid.high=x-high,
+         state=factor(state, levels=state[order(resid)], ordered=T))
+
+ggplot(plot.data2, aes(state, resid)) + 
+  geom_pointrange(aes(ymin=resid.low, ymax=resid.high), shape=21, fill="dodgerblue") +
+  coord_flip() + theme_bw() + labs(x="", y= "residuals") +
+  geom_hline(yintercept=0,linetype="dashed") 
+```
+
+### Spurious correlations (omitted variable bias)
+
+The book has some good information about spurious correlations on pages 134-135 and is worth a read. The basic argument is that if the "real" predictor is included in the model, then multivariate regression will do a good job figuring out which one is "real", even if other variables are included that are also driven by the "real" predictor. Whereas a model can never tell you *what variable you should have included in the model* and we will be left thinking that the covariates with large absolute values of the coefficients are actually driving our response variable, when it could just be spurious correlation.
+
+### Masked relationships
+
+Masked relationships between covariates arise when two variables are correlated with the response but one has positive correlation and one has negative correlation. This can have the effect of "masking" important relationships when only looking at simple bivariate plots. For example, two indepent variables might not show much correlation with a dependent variable by themselves, but a multivariate regression will show that the effect of the variables are important after controlling for the the effect of the other variable. An example is below.
+
+```{r}
+# load dataset
+data(milk)
+d <- milk
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(d[1:10,c(1,3:8)])
+print(tab,include.rownames=F,comment = F)
+```
+
+A popular hypothesis is that primates with large brains produce more energetic milk so that brains can grow quickly. The research question is, "to what extent does the kilocalories of milk relate to the the percent of the brain mass that is the neocortex". We can first look at a simple bivariate models between milk energy and neocortex, and milk energy and log(female mass):
+
+```{r}
+# remove NA rows
+dcc <- d[complete.cases(d), ]
+
+# fit model
+m5.6 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu, sigma),
+    mu <- a + bn*neocortex.perc,
+    a ~ dnorm(0,100),
+    bn ~ dnorm(0,1),
+    sigma ~ dunif(0,1)
+  ),
+  data=dcc,
+    start = list(
+    a=mean(dcc$kcal.per.g),
+    bn=0,
+    sigma=sd(dcc$kcal.per.g)
+  )
+)
+
+precis(m5.6, digits=3)
+```
+
+```{r}
+# add log(mass) to data
+dcc$log.mass <- log(dcc$mass)
+
+# fit model
+m5.7 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu, sigma),
+    mu <- a + bm*log.mass,
+    a ~ dnorm(0,100),
+    bm ~ dnorm(0,1),
+    sigma ~ dunif(0,1)
+  ),
+    data=dcc,
+    start = list(
+    a=mean(dcc$kcal.per.g),
+    bn=0,
+    sigma=sd(dcc$kcal.per.g)
+  )
+)
+
+precis(m5.7, digits=3)
+```
+
+So neocortex percentage has a slight positive correlation with milk energy, and log(female mass) has a slight negative correlation. Now run a multivariate regression using both neocortex and log(female mass).
+
+$$
+\begin{aligned}
+k_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_n n_i + \beta_m log(m_i) \\
+\alpha &\sim Normal(0,100) \\
+\beta_M &\sim Normal(0,1)  \\
+\beta_A &\sim Normal(0,1)  \\
+\sigma &\sim Uniform(0,10)
+\end{aligned}
+$$
+
+```{r}
+# fit model
+m5.8 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu, sigma),
+    mu <- a + bn*neocortex.perc + bm*log.mass,
+    a ~ dnorm(0,100),
+    bn ~ dnorm(0,1),
+    bm ~ dnorm(0,1),
+    sigma ~ dunif(0,10)
+  ),
+  data=dcc,
+  start = list(
+    a=mean(dcc$kcal.per.g),
+    bn=0,
+    bm=0,
+    sigma=sd(dcc$kcal.per.g)
+  )
+)
+
+precis(m5.8,digits=3)
+```
+
+The coefficient of neocortex is 5x larger, and the coefficient for log(female mass) is 3x larger in the multivariate model than in the individual bivariate models. This means that when we control for mass, the effect of the neocortex is amplified, and the reverse is also true. We can also generate some data to illustrate masking:
+
+```{r}
+N <- 100
+rho <- 0.7
+xpos <- rnorm(N)
+xneg <- rnorm(N, rho*xpos, sqrt(1-rho^2))
+y <- rnorm(N, xpos-xneg)
+d <- data.frame(y,xpos,xneg)
+
+pairs(d)
+```
+
+`xpos` and `xneg` are positively correlated with each other but slightly positively correlated and negatively correlated with `y`. Below I just use `lm` but the results would be similar if we used `map`:
+
+```{r}
+coef(lm(y~xpos, d))
+coef(lm(y~xneg, d))
+coef(lm(y~xneg + xpos, d))
+```
+
+The regression model is able to "discover" that the mean of `y` is actually `xpos-xneg`, and after it controls for one covariate it is able to show that the effect is actually greater for each covariate when combined than when seperated.
+
+### Multicollinearity
+
+To demonstrate multicollinearity we will simulate a dataset to predict height using the length of both legs.
+
+```{r}
+N <- 100
+height <- rnorm(N, 10, 2)
+
+# legs between 0.4 and 0.5 height
+leg_prop <- runif(N,0.4,0.5) 
+
+# salt left leg with small variation
+leg_left <- leg_prop*height + rnorm(N,0,0.02)
+
+# salt right leg with small variation
+leg_right <- leg_prop*height + rnorm(N,0,0.02)
+
+d <- data.frame(height, leg_left, leg_right)
+
+pairs(d)
+```
+
+Before we build the model, let's think about what we expect. The legs are around 45% of the height, so we would expect the $\beta$ coefficient to be aound the average height (10) divided by 45% of the height (4.5), so somewhere around 2.2.
+
+```{r}
+m5.9 <- map(
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + bl*leg_left + br*leg_right,
+    a ~ dnorm(10,100),
+    bl ~ dnorm(2,10),
+    br ~ dnorm(2,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d,
+    start = list(
+    a=mean(d$height),
+    bl=2,
+    br=2,
+    sigma=sd(d$height)
+  )
+)
+
+precis(m5.9)
+```
+
+The model doesn't know if the coefficients are even positive or negative. The model answered the question we asked: *what is the value of knowing the length of the each leg length after knowing the length of the other leg?*. Because the left and right leg lengths are very correlated, we are basically beuilding this model,
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_1 x_i + \beta_2 x_i \\
+\mu_i &= \alpha + (\beta_1 + \beta_2)x_i \\
+\end{aligned}
+$$
+
+where two coefficient are estimated using the same covariate (i.e., 2 highly correlated covariates). There is basically an infinite number of ways that we can sum $\beta_1$ and $\beta_2$ that allows us to capture the correct association between x and y. Below is bivariate plot from samples of the $bl$ and $br$ from our posterior:
+
+```{r}
+post <- extract.samples(m5.9)
+qplot(bl,br,data=post) + theme_bw()
+```
+
+The estimates of $bl$ and $br$ are highly correlated, which is what is causing the identity problem. Let's look at the distribution of $br + bl$
+
+```{r, echo=F}
+samp_dens <- with(density(post$bl+post$br), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="bl + br",y="density")
+```
+
+The mean is a little over 2 like we thought it should be, and the standard deviation is much smaller. It is basically the same distribution you would get if you just dropped one of the predictors. The important thing to note is that multicollinearity does not hurt the prediction accuracy, but just makes it impossible to say which predictor is having what effect on the outcome 
+
+**Non-identifiability in Bayesian models**
+
+Technically, all proper posterior distributions (integrates to 1) have indentifiable parameters but some might be very *weakly-identified*, which can be functionally the same as non-identified.
+
+### Post-treatment bias
+
+Issues can arise from including varaibles in in models that are consequences of other variables. We can simulate this using an example from testing the treatment effect of plant height.
+
+```{r}
+# number of plants
+N <- 100
+
+# simulate initial heights
+h0 <- rnorm(N,10,2)
+
+# assign treatments and simulate fungus growth
+treatment <- rep(0:1, each=N/2)
+fungus <- rbinom(N,size=1,prob=0.5 - treatment*0.4)
+h1 <- h0 + rnorm(N, 5 + (-3*fungus))
+
+# make data frame
+d <- data.frame(h0=h0, h1=h1, treatment=treatment, fungus=fungus)
+```
+
+This is the basic form of the model,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_h*h_0 + \beta_t*treatment + \beta_f*fungus \\
+\end{aligned}
+$$
+
+```{r}
+m5.10 <- map(
+  alist(
+    h1 ~ dnorm(mu,sigma),
+    mu <- a + bh*h0 + bt*treatment + bf*fungus,
+    a ~ dnorm(0,50),
+    c(bh,bt,bf) ~ dnorm(0,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+plot(precis(m5.10))
+```
+
+The model is saying that the effect of the treatment is small, but the effect of the original height and the amount of fungus are important. It is answering the question, *once we know that a plant has fungus, does soil treatment matter?*, and the answer to that is no, because soil treatment effected growth by reducing fungus. If we want to know the effect of the treatment on the growth then we need to omit fungus, the post-treatment variable.
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_h*h_0 + \beta_t*treatment \\
+\end{aligned}
+$$
+
+```{r}
+m5.11 <- map(
+  alist(
+    h1 ~ dnorm(mu,sigma),
+    mu <- a + bh*h0 + bt*treatment,
+    a ~ dnorm(0,50),
+    c(bh,bt) ~ dnorm(0,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+plot(precis(m5.11))
+```
+
+Now the effect of the treatment is much greater.
+
+### Categorical variables
+
+**Binary variable**
+
+The purpose of this section is to understand *how* a categorical variable is included in the model. Load in the height data that has a gender column,
+
+```{r}
+data(Howell1)
+d <- Howell1
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(d[1:10,])
+print(tab,include.rownames=F,comment = F)
+```
+
+Here is the model we would like to fit,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_m*m_i \\
+\alpha &\sim N(180,100) \\
+\beta_m &\sim N(0,10) \\
+\sigma &\sim Uniform(0,50) \\
+\end{aligned}
+$$
+
+It should be clear that $\beta_m$ only has an effect when male=1 (when it is female then it is $\beta_m*0$).
+
+```{r}
+m5.12 <- map(
+  alist(
+    height ~ dnorm(mu,sigma),
+    mu <- a + bm*male,
+    a ~ dnorm(180,100),
+    bm ~ dnorm(0,10),
+    sigma ~ dunif(0,50)
+  ),
+  data=d)
+
+precis(m5.12)
+```
+
+Now $\alpha$ is the average height among females (because when $m_i=0$, then the prediction is just $\alpha$) and $\beta_m$ tells us the average difference in height among males and females. So the average male height is just $\alpha + \beta_m = 142.12$. We can calculate the posterior distriubtion of average male heights by,
+
+```{r}
+post <- extract.samples(m5.12)
+mu.male <- post$a + post$bm
+PI(mu.male)
+```
+
+**Many categories**
+
+The general rule is to use k-1 categories, where the "0" category is measured by the intercept. Start by loading the milt data:
+
+```{r}
+data(milk)
+d <- milk
+```
+
+There are four unique Clades: `r unique(d$clade)[1]`, `r unique(d$clade)[2]`, `r unique(d$clade)[3]`, and `r unique(d$clade)[4]`. The first step is to code those as dummy variables,
+
+```{r}
+d$clade.nwm <- ifelse(d$clade=="New World Monkey", 1, 0)
+d$clade.owm<- ifelse(d$clade=="Old World Monkey", 1, 0)
+d$clade.s <- ifelse(d$clade=="Strepsirrhine", 1, 0)
+```
+
+Recall, we don't need to add a category for Ape because it is the "0" category. We want to model kcal.per.g as a function of clade:
+
+$$
+\begin{aligned}
+k_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_1*nwm_i + \beta_2*owm_i + \beta_3*s_i \\
+\alpha &\sim N(0.6,10) \\
+\beta_1 &\sim N(0,1) \\
+\beta_2 &\sim N(0,1) \\
+\beta_3 &\sim N(0,1) \\
+\sigma &\sim Uniform(0,10) \\
+\end{aligned}
+$$
+
+The categorical varaible basically creates a different linear model for each Clade. So for Ape, the model is equal to $\mu_i = \alpha$, for `r unique(d$clade)[2]` the model is $\mu_i = \alpha + \beta*nwm_i$...etc. 
+
+```{r}
+m5.13 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu,sigma),
+    mu <- a + b.nwm*clade.nwm + b.owm*clade.owm + b.s*clade.s,
+    a ~ dnorm(0.6,10),
+    c(b.nwm,b.owm,b.s) ~ dnorm(0,1),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+precis(m5.13)
+```
+
+Because $\alpha$ is the average milk energy for apes, we can calculate the posterior distribution  of average milk energy in each category using samples:
+
+```{r}
+# sample the posterior
+post <- extract.samples(m5.13)
+
+# compute averages for each county
+milk.energy <- post %>%
+  mutate(ape=a,
+         nwm=a+b.nwm,
+         owm=a+b.owm,
+         s=a+b.s) %>%
+  select(ape,nwm,owm,s)
+```
+
+```{r, echo=F, fig.width=3.5,fig.heigh=3}
+ggplot(melt(milk.energy)) + 
+  geom_boxplot(aes(variable,value),width=0.2,color="black",fill="grey70",outlier.size = 0.5) +
+  theme_bw() +
+  labs(x="category",y="average milk energy")
+```
+
+**Unique intercepts using an index variable**
+
+Previously we added a new column for each clade. We can accomplish the same thing by adding a single column with different index values. These will come up more later for multi-level models.
+
+```{r}
+data(milk)
+d <- milk
+d$clade_id <- coerce_index(d$clade)
+```
+
+```{r}
+m5.14 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu,sigma),
+    mu <- a[clade_id],
+    a[clade_id] ~ dnorm(0.6,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+precis(m5.14, depth=2)
+```
+
+Compare the $\alpha$ values above to the values in the boxplot. Earilier we had to add each estimate to the $\alpha$ estimate to calculate the mean value for each category. Using an index variable skips this additional step. 
+
+**Ordinary least squares**
+
+The book has a section (page 159-162) on how to use `lm` in R to create linear regression models. I do not go into that here, however, there is a nice `rethinkng` function to create `MAP` models from model design formulas.
+
+```{r}
+data(cars)
+glimmer(dist~speed,data=cars)
+```
+
+### Homework
+
+**(5M4)**
+
+Add LDS data to divorce rate model:
+
+```{r}
+data(WaffleDivorce)
+d <- WaffleDivorce
+
+# add percent LDS from wikipedia
+d$pct_LDS <- c(0.75, 4.53, 6.18, 1, 2.01, 2.82, 0.43, 0.55, 0.38,
+0.75, 0.82, 5.18, 26.35, 0.44, 0.66, 0.87, 1.25, 0.77, 0.64, 0.81,
+0.72, 0.39, 0.44, 0.58, 0.72, 1.14, 4.78, 1.29, 0.61, 0.37, 3.34,
+0.41, 0.82, 1.48, 0.52, 1.2, 3.85, 0.4, 0.37, 0.83, 1.27, 0.75,
+1.21, 67.97, 0.74, 1.13, 3.99, 0.92, 0.44, 11.5)
+
+d2 <- d %>%
+  select(divorce = Divorce,marriage=Marriage,
+         age=MedianAgeMarriage,pct_LDS) %>%
+  mutate(marriage = scale(marriage),
+         age=scale(age),
+         pct_LDS=scale(pct_LDS))
+
+hw5m4 <- map(
+  alist(
+    divorce ~ dnorm(mu,sigma),
+    mu <- a + bR*marriage + bA*age + bM*pct_LDS,
+    a ~ dnorm(0,100),
+    c(bA,bR,bM) ~ dnorm(0,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d2)
+
+
+precis(hw5m4)
+```
+
+
+**(5H2)**
+
+Now fit a bivariate model and plot both while holding the other variable at its mean.
+
+
+
+These homework examples use the `foxes` dataset:
+
+```{r}
+data(foxes)
+d <- foxes
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(d[1:10,])
+print(tab,include.rownames=F,comment = F)
+```
+
+Fit two linear regressions (1) $bodyweight=f(area)$ and (2) $bodyweight=f(groupsize)$, and plot regression line with 95% interval of the mean.
+
+```{r}
+m_area <- map(
+  alist(
+    weight ~ dnorm(mu,sigma),
+    mu <- a + b*area,
+    a ~ dnorm(5,10),
+    b ~ dnorm(0,5),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+precis(m_area)
+```
+
+```{r}
+m_gsize <- map(
+  alist(
+    weight ~ dnorm(mu,sigma),
+    mu <- a + b*groupsize,
+    a ~ dnorm(5,10),
+    b ~ dnorm(0,5),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+precis(m_gsize)
+```
+
+```{r, echo=F, results='hide'}
+# AREA 
+# define area sequence
+area.seq <- seq(min(d$area)-0.5, max(d$area)+0.5,0.1)
+
+# calculate 95%% HPDI around mean
+mu <- link(m_area, data=data.frame(area=area.seq,n=1000))
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.95)
+
+# plot
+ggplot() + geom_point(aes(d$area, d$weight), shape=21) + theme_bw() +
+  geom_line(aes(area.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=area.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  labs(x="area",y="weight")
+
+# GROUP SIZE
+# define groupsize sequence
+gsize.seq <- seq(min(d$groupsize)-1, max(d$groupsize)+1,1)
+
+# calculate 95% HPDI around mean
+mu <- link(m_gsize, data=data.frame(groupsize=gsize.seq,n=1000))
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.95)
+
+# plot
+ggplot() + geom_point(aes(d$groupsize, d$weight), shape=21) + theme_bw() +
+  geom_line(aes(gsize.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=gsize.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  labs(x="group size",y="weight")
+```
+
+**(5H2)**
+
+Fit a bivariate model and plot each predictor vs the response while holding the other predictor at its mean.
+
+```{r}
+m5h2 <- map(
+  alist(
+    weight ~ dnorm(mu,sigma),
+    mu <- a + ba*area + bg*groupsize,
+    a ~ dnorm(5,10),
+    ba ~ dnorm(0,5),
+    bg ~ dnorm(0,5),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+precis(m5h2)
+```
+
+plot groupsize while area is held at it's mean:
+
+```{r,results='hide'}
+# prepare counterfactual data
+area.avg <- mean(d$area) 
+gsize.seq <- seq(min(d$groupsize)-1, max(d$groupsize)+1,1)
+
+pred.data <- data.frame(area=area.avg, groupsize=gsize.seq)
+
+# compute counterfactual mean divorce
+mu <- link(m5h2, data=pred.data)
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu,2,PI,prob=0.95)
+
+# simulate counterfactual divorce outcomes
+m.sim <- sim(m5h2, data=pred.data, n=1e4)
+m.PI <- apply(m.sim, 2, PI,prob=0.95)
+```
+
+```{r, echo=F}
+ggplot() + geom_line(aes(gsize.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=gsize.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=gsize.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
+  labs(x="group size when [area = mean(area)]",y="predicted weight") +
+  theme_bw()
+```
+
+plot area while groupsize is held at it's mean:
+
+```{r,results='hide'}
+# prepare counterfactual data
+gs.avg <- mean(d$groupsize) 
+area.seq <- seq(min(d$area)-0.5, max(d$area)+0.5,0.1)
+
+pred.data <- data.frame(area=area.seq, groupsize=gs.avg)
+
+# compute counterfactual mean divorce
+mu <- link(m5h2, data=pred.data)
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu,2,PI,prob=0.95)
+
+# simulate counterfactual divorce outcomes
+m.sim <- sim(m5h2, data=pred.data, n=1e4)
+m.PI <- apply(m.sim, 2, PI,prob=0.95)
+```
+
+```{r, echo=F}
+ggplot() + geom_line(aes(area.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=area.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=area.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
+  labs(x="area when [group size = mean(group size)]",y="predicted weight") +
+  theme_bw()
+```
+
+**(5H3)**
+
+The question is intented to show what happens when correlated predictors are included in the model. I went through the chapter example in detail and refer my future self to that section to understand the effects of correlated predictors.
 
