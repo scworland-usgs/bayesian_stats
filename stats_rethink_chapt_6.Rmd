@@ -146,10 +146,63 @@ The second model has a higher divergence because it's predicted probabilities ar
 
 ### Deviance
 
+In reality we would not actually have the probability distribution $p$ that we are trying to model (or we wouldn't need the model!). What we normally have is several different estimates, like $q1$ and $q2$, and we want to compare those. Recall from grid approximation that when we are calculating the likelihood, $p(D|H)$ = the probability of the data given our model, that provided a lot of information about how the probability of a certain model. First I will define deviance and then show an example. The deviance of a particular model is,
 
+$$
+D(q) = -2 \sum_i log(q_i)
+$$
 
+where $qi$ is the likelihood of each oberservation. The -2 is only there for historical reasons. We can calculate the log-likelihood for any model. 
 
+```{r}
+# generate a covariate
+x <- 1:100
 
+# generate "real" parameters
+a = 10
+b = 2
+
+# generate a response variable with some noise
+y <- a + b*x + rnorm(100,0,25)
+
+# generate "bad" parameters
+a2 = -50
+b2 = 4
+
+# make predictions of the mean from two models
+m1 <- a + b*x # good model
+m2 <- a2 + b2*x # bad model
+```
+
+```{r, echo=F}
+# combine
+d <- data.frame(y=y,x=x,m1=m1,m2=m2) %>%
+  melt(., id.vars=c("x","y"))
+
+# plot model fits on data
+ggplot(d) + 
+  geom_point(aes(x,y)) +
+  geom_line(aes(x,value,color=variable)) +
+  labs(color="model fit") +
+  theme_bw()
+```
+
+Obviously the first model does a better job, because the response variable was generated using the parameters from the model "m1". The next step is to calculate the deviance for each model:
+
+```{r}
+# log likelihood function
+dev <- function(y,mu,sigma){-2*sum(dnorm(y,mu,sigma,log=T))}
+
+# model 1 deviance
+dev(y,m1,sd(y)) 
+
+# model 2 deviance
+dev(y,m2,sd(y))
+```
+
+The absolute deviance values from each model don't provide any information, but we can compare the deviance values from each model to each other. We want to select the model with the smallest deviance, and in this case, we thankfully are selecting the "true" model! Deviance in the previous example is similar to $R^2$: it is a measure of retrodictive accuracy, not predictive accuracy. In reality what we want to do is compare the deviance for out-of-sample predictions.
+
+## Regularization
 
 
 

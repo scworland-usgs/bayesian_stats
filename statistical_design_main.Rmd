@@ -1647,20 +1647,14 @@ d2 <- d2 %>% mutate(weight_c=weight-mean(weight))
 
 # fit the MAP model
 lm1.c <- map(
-  alist(
-    height ~ dnorm(mu, sigma),
-    mu <- a + b*weight_c,
-    a ~ dnorm(0,100),
-    b ~ dnorm(0,10),
-    sigma ~ dunif(0, 50)
-  ),
-  data=d2,
-  start = list(
-    a=mean(d2$height),
-    b=0,
-    sigma=sd(d2$height)
-  )
-)
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight_c,
+        a ~ dnorm(0,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
 ```
 
 ```{r, echo=F, results='asis'}
@@ -1698,20 +1692,14 @@ d_sub <- sample_n(d2,10)
 
 # fit the MAP model
 lm1_sub <- map(
-  alist(
-    height ~ dnorm(mu, sigma),
-    mu <- a + b*weight,
-    a ~ dnorm(190.5,100),
-    b ~ dnorm(0,10),
-    sigma ~ dunif(0, 50)
-  ),
-  data=d_sub,
-  start = list(
-    a=mean(d_sub$height),
-    b=0,
-    sigma=sd(d_sub$height)
-  )
-  )
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d_sub)
 
 # extract 20 samples
 posterior_sub <- extract.samples(lm1_sub, n=20)
@@ -2451,7 +2439,7 @@ ggplot(plot.data2, aes(state, resid)) +
 
 ### Spurious correlations (omitted variable bias)
 
-The book has some good information about spurious correlations on pages 134-135 and is worth a read. The basic argument is that if the "real" predictor is included in the model, then multivariate regression will do a good job figuring out which one is "real", even if other variables are included that are also driven by the "real" predictor. Whereas a model can never tell you *what variable you should have included in the model* and we will be left thinking that the covariates with large absolute values of the coefficients are actually driving our response variable, when it could just be spurious correlation.
+The book has some good information about spurious correlations on pages 134-135 and is worth a read. The basic argument is that if the "real" predictor is included in the model, then multivariate regression will do a good job figuring out which on is "real", even if other variables are included that are also driven by the "real" predictor. Whereas a model can never tell you *what variable you should have included in the model* and we will be left thinking that the covariates with large absolute values of the coefficients are actually driving our response variable, when it could just be spurious correlation.
 
 ### Masked relationships
 
@@ -2483,13 +2471,7 @@ m5.6 <- map(
     bn ~ dnorm(0,1),
     sigma ~ dunif(0,1)
   ),
-  data=dcc,
-    start = list(
-    a=mean(dcc$kcal.per.g),
-    bn=0,
-    sigma=sd(dcc$kcal.per.g)
-  )
-)
+  data=dcc)
 
 precis(m5.6, digits=3)
 ```
@@ -2507,13 +2489,7 @@ m5.7 <- map(
     bm ~ dnorm(0,1),
     sigma ~ dunif(0,1)
   ),
-    data=dcc,
-    start = list(
-    a=mean(dcc$kcal.per.g),
-    bn=0,
-    sigma=sd(dcc$kcal.per.g)
-  )
-)
+  data=dcc)
 
 precis(m5.7, digits=3)
 ```
@@ -2542,14 +2518,7 @@ m5.8 <- map(
     bm ~ dnorm(0,1),
     sigma ~ dunif(0,10)
   ),
-  data=dcc,
-  start = list(
-    a=mean(dcc$kcal.per.g),
-    bn=0,
-    bm=0,
-    sigma=sd(dcc$kcal.per.g)
-  )
-)
+  data=dcc)
 
 precis(m5.8,digits=3)
 ```
@@ -2575,7 +2544,7 @@ coef(lm(y~xneg, d))
 coef(lm(y~xneg + xpos, d))
 ```
 
-The regression model is able to "discover" that the mean of `y` is actually `xpos-xneg`, and after it controls for one covariate it is able to show that the effect is actually greater for each covariate when combined than when seperated.
+The regression model is able to "discover" that the mean of `y` is actually `xpos-xneg`, and after it controls for one covariate it is able to show that the effect is actually greater for each covariate when combined then when seperated.
 
 ### Multicollinearity
 
@@ -2599,7 +2568,7 @@ d <- data.frame(height, leg_left, leg_right)
 pairs(d)
 ```
 
-Before we build the model, let's think about what we expect. The legs are around 45% of the height, so we would expect the $\beta$ coefficient to be aound the average height (10) divided by 45% of the height (4.5), so somewhere around 2.2.
+Before we build the model, let's think about what we expect. The legs are around 45% of the height, so we would expect the beta coefficient to be aound the average height (10) divided by 45% of the height (4.5), so somewhere around 2.2.
 
 ```{r}
 m5.9 <- map(
@@ -2611,16 +2580,9 @@ m5.9 <- map(
     br ~ dnorm(2,10),
     sigma ~ dunif(0,10)
   ),
-  data=d,
-    start = list(
-    a=mean(d$height),
-    bl=2,
-    br=2,
-    sigma=sd(d$height)
-  )
-)
+  data=d)
 
-precis(m5.9)
+plot(precis(m5.9))
 ```
 
 The model doesn't know if the coefficients are even positive or negative. The model answered the question we asked: *what is the value of knowing the length of the each leg length after knowing the length of the other leg?*. Because the left and right leg lengths are very correlated, we are basically beuilding this model,
@@ -2633,7 +2595,7 @@ y_i &\sim Normal(\mu_i,\sigma) \\
 \end{aligned}
 $$
 
-where two coefficient are estimated using the same covariate (i.e., 2 highly correlated covariates). There is basically an infinite number of ways that we can sum $\beta_1$ and $\beta_2$ that allows us to capture the correct association between x and y. Below is bivariate plot from samples of the $bl$ and $br$ from our posterior:
+where two coefficient are estimated using the same covariate (i.e., 2 highly correlated covariates). There is basically an infinite number of ways that we can sum $beta_1$ and $beta_2$ that allows us to capture the correct association between x and y. Below is bivariate plot from samples of the $bl$ and $br$ from our posterior:
 
 ```{r}
 post <- extract.samples(m5.9)
@@ -2681,7 +2643,7 @@ This is the basic form of the model,
 $$
 \begin{aligned}
 h_i &\sim Normal(\mu_i,\sigma) \\
-\mu_i &= \alpha + \beta_h*h_0 + \beta_t*treatment + \beta_f*fungus \\
+\mu_i &= \alpha + \beta_h*h_0 + \beta_t*treatment + beta_f*fungus \\
 \end{aligned}
 $$
 
@@ -2699,7 +2661,7 @@ m5.10 <- map(
 plot(precis(m5.10))
 ```
 
-The model is saying that the effect of the treatment is small, but the effect of the original height and the amount of fungus are important. It is answering the question, *once we know that a plant has fungus, does soil treatment matter?*, and the answer to that is no, because soil treatment effected growth by reducing fungus. If we want to know the effect of the treatment on the growth then we need to omit fungus, the post-treatment variable.
+The model is saying that the effect of the treatment is small, but the effect of the original height and the amount of fungus are important. It is answering the question, *one we know that a plant has fungus, does soil treatment matter?*, and the answer to that is no, because soil treatment effected growth by reducing fungus. If we want to know the effect of the treatment on the growth then we need to omit fungus, the post-treatment variable.
 
 $$
 \begin{aligned}
@@ -2785,7 +2747,7 @@ data(milk)
 d <- milk
 ```
 
-There are four unique Clades: `r unique(d$clade)[1]`, `r unique(d$clade)[2]`, `r unique(d$clade)[3]`, and `r unique(d$clade)[4]`. The first step is to code those as dummy variables,
+There are four unique Clades, `r unique(d$clade)[1]`, `r unique(d$clade)[2]`, `r unique(d$clade)[3]`, and `r unique(d$clade)[4]`. The first step is to code those as dummy variables,
 
 ```{r}
 d$clade.nwm <- ifelse(d$clade=="New World Monkey", 1, 0)
@@ -2794,6 +2756,7 @@ d$clade.s <- ifelse(d$clade=="Strepsirrhine", 1, 0)
 ```
 
 Recall, we don't need to add a category for Ape because it is the "0" category. We want to model kcal.per.g as a function of clade:
+
 
 $$
 \begin{aligned}
@@ -2807,271 +2770,4 @@ k_i &\sim Normal(\mu_i,\sigma) \\
 \end{aligned}
 $$
 
-The categorical varaible basically creates a different linear model for each Clade. So for Ape, the model is equal to $\mu_i = \alpha$, for `r unique(d$clade)[2]` the model is $\mu_i = \alpha + \beta*nwm_i$...etc. 
-
-```{r}
-m5.13 <- map(
-  alist(
-    kcal.per.g ~ dnorm(mu,sigma),
-    mu <- a + b.nwm*clade.nwm + b.owm*clade.owm + b.s*clade.s,
-    a ~ dnorm(0.6,10),
-    c(b.nwm,b.owm,b.s) ~ dnorm(0,1),
-    sigma ~ dunif(0,10)
-  ),
-  data=d)
-
-precis(m5.13)
-```
-
-Because $\alpha$ is the average milk energy for apes, we can calculate the posterior distribution  of average milk energy in each category using samples:
-
-```{r}
-# sample the posterior
-post <- extract.samples(m5.13)
-
-# compute averages for each county
-milk.energy <- post %>%
-  mutate(ape=a,
-         nwm=a+b.nwm,
-         owm=a+b.owm,
-         s=a+b.s) %>%
-  select(ape,nwm,owm,s)
-```
-
-```{r, echo=F, fig.width=3.5,fig.heigh=3}
-ggplot(melt(milk.energy)) + 
-  geom_boxplot(aes(variable,value),width=0.2,color="black",fill="grey70",outlier.size = 0.5) +
-  theme_bw() +
-  labs(x="category",y="average milk energy")
-```
-
-**Unique intercepts using an index variable**
-
-Previously we added a new column for each clade. We can accomplish the same thing by adding a single column with different index values. These will come up more later for multi-level models.
-
-```{r}
-data(milk)
-d <- milk
-d$clade_id <- coerce_index(d$clade)
-```
-
-```{r}
-m5.14 <- map(
-  alist(
-    kcal.per.g ~ dnorm(mu,sigma),
-    mu <- a[clade_id],
-    a[clade_id] ~ dnorm(0.6,10),
-    sigma ~ dunif(0,10)
-  ),
-  data=d)
-
-precis(m5.14, depth=2)
-```
-
-Compare the $\alpha$ values above to the values in the boxplot. Earilier we had to add each estimate to the $\alpha$ estimate to calculate the mean value for each category. Using an index variable skips this additional step. 
-
-**Ordinary least squares**
-
-The book has a section (page 159-162) on how to use `lm` in R to create linear regression models. I do not go into that here, however, there is a nice `rethinkng` function to create `MAP` models from model design formulas.
-
-```{r}
-data(cars)
-glimmer(dist~speed,data=cars)
-```
-
-### Homework
-
-**(5M4)**
-
-Add LDS data to divorce rate model:
-
-```{r}
-data(WaffleDivorce)
-d <- WaffleDivorce
-
-# add percent LDS from wikipedia
-d$pct_LDS <- c(0.75, 4.53, 6.18, 1, 2.01, 2.82, 0.43, 0.55, 0.38,
-0.75, 0.82, 5.18, 26.35, 0.44, 0.66, 0.87, 1.25, 0.77, 0.64, 0.81,
-0.72, 0.39, 0.44, 0.58, 0.72, 1.14, 4.78, 1.29, 0.61, 0.37, 3.34,
-0.41, 0.82, 1.48, 0.52, 1.2, 3.85, 0.4, 0.37, 0.83, 1.27, 0.75,
-1.21, 67.97, 0.74, 1.13, 3.99, 0.92, 0.44, 11.5)
-
-d2 <- d %>%
-  select(divorce = Divorce,marriage=Marriage,
-         age=MedianAgeMarriage,pct_LDS) %>%
-  mutate(marriage = scale(marriage),
-         age=scale(age),
-         pct_LDS=scale(pct_LDS))
-
-hw5m4 <- map(
-  alist(
-    divorce ~ dnorm(mu,sigma),
-    mu <- a + bR*marriage + bA*age + bM*pct_LDS,
-    a ~ dnorm(0,100),
-    c(bA,bR,bM) ~ dnorm(0,10),
-    sigma ~ dunif(0,10)
-  ),
-  data=d2)
-
-
-precis(hw5m4)
-```
-
-
-**(5H2)**
-
-Now fit a bivariate model and plot both while holding the other variable at its mean.
-
-
-
-These homework examples use the `foxes` dataset:
-
-```{r}
-data(foxes)
-d <- foxes
-```
-
-```{r, echo=F, results='asis'}
-tab <- xtable(d[1:10,])
-print(tab,include.rownames=F,comment = F)
-```
-
-Fit two linear regressions (1) $bodyweight=f(area)$ and (2) $bodyweight=f(groupsize)$, and plot regression line with 95% interval of the mean.
-
-```{r}
-m_area <- map(
-  alist(
-    weight ~ dnorm(mu,sigma),
-    mu <- a + b*area,
-    a ~ dnorm(5,10),
-    b ~ dnorm(0,5),
-    sigma ~ dunif(0,10)
-  ),
-  data=d)
-
-precis(m_area)
-```
-
-```{r}
-m_gsize <- map(
-  alist(
-    weight ~ dnorm(mu,sigma),
-    mu <- a + b*groupsize,
-    a ~ dnorm(5,10),
-    b ~ dnorm(0,5),
-    sigma ~ dunif(0,10)
-  ),
-  data=d)
-
-precis(m_gsize)
-```
-
-```{r, echo=F, results='hide'}
-# AREA 
-# define area sequence
-area.seq <- seq(min(d$area)-0.5, max(d$area)+0.5,0.1)
-
-# calculate 95%% HPDI around mean
-mu <- link(m_area, data=data.frame(area=area.seq,n=1000))
-mu.mean <- apply(mu,2,mean)
-mu.HPDI <- apply(mu,2,HPDI,prob=0.95)
-
-# plot
-ggplot() + geom_point(aes(d$area, d$weight), shape=21) + theme_bw() +
-  geom_line(aes(area.seq,mu.mean), color="dodgerblue") +
-  geom_ribbon(aes(x=area.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
-  labs(x="area",y="weight")
-
-# GROUP SIZE
-# define groupsize sequence
-gsize.seq <- seq(min(d$groupsize)-1, max(d$groupsize)+1,1)
-
-# calculate 95% HPDI around mean
-mu <- link(m_gsize, data=data.frame(groupsize=gsize.seq,n=1000))
-mu.mean <- apply(mu,2,mean)
-mu.HPDI <- apply(mu,2,HPDI,prob=0.95)
-
-# plot
-ggplot() + geom_point(aes(d$groupsize, d$weight), shape=21) + theme_bw() +
-  geom_line(aes(gsize.seq,mu.mean), color="dodgerblue") +
-  geom_ribbon(aes(x=gsize.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
-  labs(x="group size",y="weight")
-```
-
-**(5H2)**
-
-Fit a bivariate model and plot each predictor vs the response while holding the other predictor at its mean.
-
-```{r}
-m5h2 <- map(
-  alist(
-    weight ~ dnorm(mu,sigma),
-    mu <- a + ba*area + bg*groupsize,
-    a ~ dnorm(5,10),
-    ba ~ dnorm(0,5),
-    bg ~ dnorm(0,5),
-    sigma ~ dunif(0,10)
-  ),
-  data=d)
-
-precis(m5h2)
-```
-
-plot groupsize while area is held at it's mean:
-
-```{r,results='hide'}
-# prepare counterfactual data
-area.avg <- mean(d$area) 
-gsize.seq <- seq(min(d$groupsize)-1, max(d$groupsize)+1,1)
-
-pred.data <- data.frame(area=area.avg, groupsize=gsize.seq)
-
-# compute counterfactual mean divorce
-mu <- link(m5h2, data=pred.data)
-mu.mean <- apply(mu, 2, mean)
-mu.PI <- apply(mu,2,PI,prob=0.95)
-
-# simulate counterfactual divorce outcomes
-m.sim <- sim(m5h2, data=pred.data, n=1e4)
-m.PI <- apply(m.sim, 2, PI,prob=0.95)
-```
-
-```{r, echo=F}
-ggplot() + geom_line(aes(gsize.seq,mu.mean), color="dodgerblue") +
-  geom_ribbon(aes(x=gsize.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
-  geom_ribbon(aes(x=gsize.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
-  labs(x="group size when [area = mean(area)]",y="predicted weight") +
-  theme_bw()
-```
-
-plot area while groupsize is held at it's mean:
-
-```{r,results='hide'}
-# prepare counterfactual data
-gs.avg <- mean(d$groupsize) 
-area.seq <- seq(min(d$area)-0.5, max(d$area)+0.5,0.1)
-
-pred.data <- data.frame(area=area.seq, groupsize=gs.avg)
-
-# compute counterfactual mean divorce
-mu <- link(m5h2, data=pred.data)
-mu.mean <- apply(mu, 2, mean)
-mu.PI <- apply(mu,2,PI,prob=0.95)
-
-# simulate counterfactual divorce outcomes
-m.sim <- sim(m5h2, data=pred.data, n=1e4)
-m.PI <- apply(m.sim, 2, PI,prob=0.95)
-```
-
-```{r, echo=F}
-ggplot() + geom_line(aes(area.seq,mu.mean), color="dodgerblue") +
-  geom_ribbon(aes(x=area.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
-  geom_ribbon(aes(x=area.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
-  labs(x="area when [group size = mean(group size)]",y="predicted weight") +
-  theme_bw()
-```
-
-**(5H3)**
-
-The question is intented to show what happens when correlated predictors are included in the model. I went through the chapter example in detail and refer my future self to that section to understand the effects of correlated predictors.
 
