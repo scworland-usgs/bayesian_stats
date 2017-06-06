@@ -1,0 +1,11 @@
+# Ignore everything
+*
+
+# But not these files...
+!*.Rmd
+!*.md
+!*.gitignore
+# etc...
+
+# ...even if they are in subdirectories
+!*/

@@ -1,0 +1,926 @@
+---
+title: "SR chapter 10: counting and classification"
+author: "scworland@usgs.gov"
+date: "2017"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: yes
+    toc_depth: 4
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+## Binomial regression
+
+The basics of binomial regression was described in chapter 9 so I only include a summary here:
+
+$$
+\begin{aligned}
+&y_i \sim Binomial(n,p_i) \\
+&logit(p_i) = \alpha + \beta x_i
+\end{aligned}
+$$
+
+where the logit function is defined as the log odds:
+
+$$
+logit(p_i) =log\frac{p_i}{1-p_i}
+$$
+where the odds of an event is just the probability that something happens divided by the probability that is does not happen. If we set the linear model = to the log odds and solve for $p_i$:
+
+$$
+\begin{aligned}
+&log\frac{p_i}{1-p_i} =  \alpha + \beta x_i \\ \\
+&p_i = \frac{exp(\alpha+\beta x_i)}{1 + exp(\alpha + \beta x_i)}
+\end{aligned}
+$$
+
+And we arrive at the logistic function (sometimes called the inverse-logit because it inverts the logit transform). The value of the parameter being modeled is the logistic transform of the linear model
+
+### Logistic regression
+
+Logistic regression is used when data are organized into into single-trial cases where the outcome is either 0-1. The data for the example is drawn from experiments done with chimpanzee to try and determine their prosocial behavior. In short, the chimps are able to pull one of two levers, where one brings them food and sends food to another chimp at the other end of the table, and the other lever just brings food to the one chimp who pulled the lever. 
+
+```{r}
+data(chimpanzees)
+d <- chimpanzees
+str(d)
+```
+
+We are going to use "pulled_left" as the response variable  and "prosoc_left" (left lever brought food to both chimps=1, 0 if not) and "condition" (chimp at the other end of the table=1, 0 if not) as predictor variables. We are going to fit 3 seperate models. First, the intercept only model:
+
+$$
+\begin{aligned}
+L_i &\sim Binomial(1,p_i) \\
+logit(p_i) &= \alpha \\
+\alpha &\sim N(0,10) 
+\end{aligned}
+$$
+
+```{r}
+m10.1 <- map(
+  alist(
+    pulled_left ~ dbinom(1,p),
+    logit(p) <- a,
+    a ~ dnorm(0,10)
+  ),
+  data=d)
+
+precis(m10.1)
+```
+
+The parameter values are currently on the scale of log-odds, and we want to get them back to the probability scale using inverse link function (logistic in this case). 
+
+```{r}
+alpha <- precis(m10.1)@output$Mean
+
+# inverse link
+exp(alpha)/(1+exp(alpha))
+
+# rethinking function for logistic
+logistic(alpha)
+```
+
+We can interpret this as the MAP probability of pulling the left level is 0.58. Now add just the prosocial predictor:
+
+$$
+\begin{aligned}
+L_i &\sim Binomial(1,p_i) \\
+logit(p_i) &= \alpha + \beta_PPi\\
+\alpha &\sim N(0,10) \\
+\beta_P &\sim N(0,10) 
+\end{aligned}
+$$
+
+```{r}
+m10.2 <- map(
+  alist(
+    pulled_left ~ dbinom(1,p),
+    logit(p) <- a + bp*prosoc_left,
+    a ~ dnorm(0,10),
+    bp ~ dnorm(0,10)
+  ),
+  data=d)
+```
+
+and a final model that includes an interaction term between prosocial and the condition:
+
+$$
+\begin{aligned}
+L_i &\sim Binomial(1,p_i) \\
+logit(p_i) &= \alpha + \beta_PP_i + \beta_{PC}(C_i*P_i) \\
+\alpha &\sim N(0,10) \\
+\beta_P &\sim N(0,10) \\
+\beta_{PC} &\sim N(0,10) 
+\end{aligned}
+$$
+
+```{r}
+m10.3 <- map(
+  alist(
+    pulled_left ~ dbinom(1,p),
+    logit(p) <- a + bp*prosoc_left + bpc*(condition*prosoc_left),
+    a ~ dnorm(0,10),
+    bp ~ dnorm(0,10),
+    bpc ~ dnorm(0,10)
+  ),
+  data=d)
+```
+
+We can compare the models using information criteria:
+
+```{r}
+compare(m10.1,m10.2,m10.3)
+```
+
+Although model 3 is slightly better in terms of deviance, we are really interested in model 3 as it is more of a direct reflection of the experiment. How do intepret the coefficients from model 3?
+
+```{r}
+precis(m10.3)
+```
+
+We can explore both the *absolute effect* and the *relative* effect of the predictors on the outcome. The relative effect is normally measured as the *proportional change in odds*, which is computed by exponentiating the parameter estimate:
+
+```{r}
+bp <- precis(m10.3)@output$Mean[2]
+exp(bp)
+```
+
+The relative effect is an increase of 1.84 in the odds of pulling the left-hand lever (i.e., odds increased by 84%). The actual change in probability, however, depends on all the other parameters due to floor and ceiling effects. For example, if the intercept is already large (i.e., high probability that the chimp will pull the lever), then an increase in 84% isn't going to make much difference.
+
+```{r}
+logistic(4)
+logistic(4+0.61)
+```
+
+So the *absolute difference* is only 1%. The same would be true if the intercept was very negative (near zero probability), then an increase of 84% in proportional odds really won't matter. One way to look at the absolute effects is through posterior predictive checks. Start by ensembling the predictions for the three models for each combination of the predictors.
+
+```{r, cache=T, results='hide'}
+# create covariate data for combination of unique values
+d.pred <- expand.grid(prosoc_left=unique(d$prosoc_left),
+                      condition=unique(d$condition))
+
+# ensemble predictions
+m10.123 <- ensemble(m10.1,m10.2,m10.3, data=d.pred)
+
+# summarize
+pred.p <- apply(m10.123$link,2,mean)
+pred.p.PI <- apply(m10.123$link,2,PI)
+
+preds <- d.pred %>%
+  mutate(average = pred.p,
+         p5 = pred.p.PI[1,],
+        p95 = pred.p.PI[2,])
+```
+
+Plots are a very important part of checking the posterior predictions, so I include all of the steps here.
+
+```{r}
+d.plot <- d %>%
+  mutate(actor=as.character(actor)) %>%
+  group_by(actor,condition,prosoc_left) %>%
+  summarize(actor.prop = mean(pulled_left)) %>%
+  ungroup() %>%
+  left_join(preds,by=c("condition","prosoc_left")) %>%
+  mutate(partner=ifelse(condition==0,"no partner","partner"),
+         prosocial=ifelse(prosoc_left==0,"no","yes")) %>%
+  select(-prosoc_left,-condition)
+
+ggplot(d.plot) + 
+  geom_line(aes(prosocial,actor.prop,group=actor,color=actor)) +
+  geom_point(aes(prosocial,actor.prop,group=actor,color=actor)) +
+  geom_line(aes(prosocial,average,group=1)) +
+  geom_pointrange(aes(x=prosocial,y=average,ymin=p5,ymax=p95,group=1)) +
+  facet_wrap(~partner) +
+  theme_bw() +
+  labs(y="proportion pulled left") +
+  ggtitle("Posterior predictive check")
+```
+
+Regardless if whether or not there was another chimp at the other end of the table, the test chimp tended to pull the prosocial lever more than the other. Our model did a good job of recognizing this and basically estimated the same effect regardless of the condition. We will want to check the pairs plot for a later model, so let's go ahead and re-estimate the 3rd model using stan and take a look at the posterior correlations.
+
+```{r, cache=T,results='hide'}
+# remove column with NAs
+d2 <- select(d, -recipient)
+
+# stan can inherit formula from map fit
+m10.3stan <- map2stan(m10.3, data=d2, iter=1e4, warmup=1000)
+```
+
+```{r}
+# pairs plot
+pairs(m10.3stan)
+```
+
+The pairs plot looks good. There is a lot of variation among the actors, which is likely related to hand preference. Could we do better by allowing the intercept to vary for each actor? 
+
+$$
+\begin{aligned}
+L_i &\sim Binomial(1,p_i) \\
+logit(p_i) &= \alpha_{actor[i]} + \beta_PP_i + \beta_{PC}(C_i*P_i) \\
+\alpha_{actor} &\sim N(0,10) \\
+\beta_P &\sim N(0,10) \\
+\beta_{PC} &\sim N(0,10) 
+\end{aligned}
+$$
+
+```{r, cache=T, results='hide'}
+m10.4 <- map2stan(
+  alist(
+    pulled_left ~ dbinom(1,p),
+    logit(p) <- a[actor] + bp*prosoc_left + bpc*(condition*prosoc_left),
+    a[actor] ~ dnorm(0,10),
+    bp ~ dnorm(0,10),
+    bpc ~ dnorm(0,10)
+  ),
+  data=d2)
+```
+
+```{r,fig.height=6,fig.width=7}
+precis(m10.4,depth=2)
+pairs(m10.4)
+```
+
+```{r, cache=T, results='hide'}
+# create covariate data for combination of unique values
+d.pred <- expand.grid(prosoc_left=unique(d$prosoc_left),
+                      condition=unique(d$condition),
+                      actor=unique(d$actor))
+
+# predictions
+link.m10.4 <- link(m10.4, data=d.pred)
+
+# summarize
+pred.p <- apply(link.m10.4,2,mean)
+pred.p.PI <- apply(link.m10.4,2,PI)
+
+preds <- d.pred %>%
+  mutate(average = pred.p,
+         p5 = pred.p.PI[1,],
+         p95 = pred.p.PI[2,],
+         actor=as.character(actor))
+```
+
+We can now plot the data vs our predictions when we account for the individual actors:
+
+```{r, echo=F, fig.width=7,fig.height=7}
+d.plot <- d %>%
+  mutate(actor=as.character(actor)) %>%
+  group_by(actor,condition,prosoc_left) %>%
+  summarize(actor.prop = mean(pulled_left)) %>%
+  ungroup() %>%
+  left_join(preds,by=c("condition","prosoc_left","actor")) %>%
+  mutate(partner=ifelse(condition==0,"no partner","partner"),
+         prosocial=ifelse(prosoc_left==0,"no","yes")) %>%
+  select(-prosoc_left,-condition)
+
+ggplot(d.plot) + 
+  geom_line(aes(prosocial,actor.prop,group=actor,color=actor)) +
+  geom_point(aes(prosocial,actor.prop,group=actor,color=actor)) +
+  geom_line(aes(prosocial,average,group=1),linetype="dashed") +
+  geom_pointrange(aes(x=prosocial,y=average,ymin=p5,ymax=p95,group=1), alpha=0.5) +
+  facet_grid(actor~partner) +
+  theme_bw() +
+  labs(y="proportion pulled left") +
+  ggtitle("Posterior predictive check", subtitle="Varying intercept model")
+```
+
+Obviously this "looks better", but this model is certainly overfit to the data. 
+
+### Aggregated binomial with same number of trials
+
+The original chimpanzee dataset had individual rows for each actor and event, but we could aggregated the number of times each actor pulled the left hand lever and recreate the same model. 
+
+```{r}
+d3 <- d %>%
+  group_by(actor, prosoc_left, condition) %>%
+  summarize(pulled_left = sum(pulled_left)) %>%
+  data.frame()
+
+head(d3,10)
+```
+
+Each actor is repeated 18 times--there were 18 trials for each animal. This means that all we have to change is the number of trials we pass to the binomial distribution:
+
+```{r}
+m10.5 <- map(
+  alist(
+    pulled_left ~ dbinom(18,p),
+    logit(p) <- a + bp*prosoc_left + bpc*(condition*prosoc_left),
+    a ~ dnorm(0,10),
+    bp ~ dnorm(0,10),
+    bpc ~ dnorm(0,10)
+  ),
+  data=d3)
+
+precis(m10.5)
+```
+
+This will give us the same result as m10.3:
+
+```{r}
+precis(m10.3)
+precis(m10.5)
+```
+
+### Aggregated binomial with varying number of trials
+
+Often the number of trials in each row is not a constant. For example, below is the result of grad school applications submited to UC Berkely.
+
+```{r}
+data("UCBadmit")
+d <- UCBadmit
+```
+
+```{r, echo=F}
+print(d,row.names = F)
+```
+
+It is only 12 rows, and is similar to the aggregated chimpanzee data above except the number of trials per row changes. We are trying to discover if there is a gender bias in the admissions. We could either exapnd this into 4526 rows and do a logistic regression, or just model it in its aggreagated form.
+
+$$
+\begin{aligned}
+n_{admit,i} &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha+ \beta_mm_i \\
+\alpha &\sim N(0,10) \\
+\beta_m &\sim N(0,10) 
+\end{aligned}
+$$
+Where the variable $n_i = applications[i]$ for each row, and $m_i$ is a dummay variable for males.
+
+```{r}
+# add male dummy variable
+d <- mutate(d, male=ifelse(applicant.gender=="male",1,0))
+
+m10.6 <- map(
+  alist(
+    admit ~ dbinom(applications,p),
+    logit(p) <- a + bm*male,
+    a ~ dnorm(0,10),
+    bm ~ dnorm(0,10)
+  ), 
+  data=d)
+
+precis(m10.6)
+```
+
+The relative difference in odds is: `bm <- exp(precis(m10.6)@output$Mean[2])` = `r round(exp(precis(m10.6)@output$Mean[2]),2)`. This suggests that males odds are 184% that of females, but let's look at the absolute scale. There are several ways to do this. A quick way is just to look at the difference in map estimates. Recall the $\alpha$ is the probability of admission for females, and $\alpha + \beta_m$ is the probability for males:
+
+```{r}
+logistic(0.61-0.83) - logistic(-0.83)
+```
+
+This indicates that there is about a 14% male advantage. We can also use the entire posterior distribution:
+
+```{r, results='hide'}
+post <- extract.samples(m10.6)
+p.admit.male <- logistic(post$a + post$bm)
+p.admit.female <- logistic(post$a)
+diff.admit <- p.admit.male - p.admit.female
+```
+
+```{r}
+quantile(diff.admit,c(0.025,0.5,0.975))
+```
+
+```{r, results='hide'}
+# create covariate data for combination of unique values
+d.pred <- expand.grid(male=unique(d$male),
+                      dept=unique(d$dept))
+
+# predictions
+link.m10.6 <- link(m10.6, data=d.pred)
+
+# summarize
+pred.p <- apply(link.m10.6,2,mean)
+pred.p.PI <- apply(link.m10.6,2,PI)
+
+preds <- d.pred %>%
+  mutate(average = pred.p,
+         p5 = pred.p.PI[1,],
+         p95 = pred.p.PI[2,])
+```
+
+```{r, echo=F, fig.width=7,fig.height=7}
+d.plot <- d %>%
+  group_by(dept,male) %>%
+  summarize(admit.prop = admit/applications) %>%
+  ungroup() %>%
+  left_join(preds,by=c("male","dept")) %>%
+  mutate(gender=ifelse(male==1,"male","female")) 
+
+ggplot(d.plot) + 
+  geom_line(aes(gender,admit.prop,group=dept,color=dept)) +
+  geom_point(aes(gender,admit.prop,group=dept,color=dept)) +
+  geom_pointrange(aes(x=gender,y=average,ymin=p5,ymax=p95,group=1), alpha=0.5) +
+  geom_line(aes(x=gender,y=average, group=1), linetype="dashed") +
+  facet_wrap(~dept) +
+  theme_bw() +
+  labs(y="proportion admitted") +
+  ggtitle("Posterior predictive check")
+  
+```
+
+Our model makes it seem that males have a better chance of being admitted, but from the plot above, we can see that is only the case for departments C and D. Females did have a lower overall probability, but not for most departments. The question we really want to ask is, *what is the average difference in probability of admission between females in males within departments?*. 
+
+$$
+\begin{aligned}
+n_{admit,i} &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha_{dept[i]}+ \beta_mm_i \\
+\alpha_{dept} &\sim N(0,10) \\
+\beta_m &\sim N(0,10) 
+\end{aligned}
+$$
+
+```{r}
+# add dept index
+d <- mutate(d, dept.id = coerce_index(dept))
+
+m10.7 <- map(
+  alist(
+    admit ~ dbinom(applications,p),
+    logit(p) <- a[dept.id] + bm*male,
+    a[dept.id] ~ dnorm(0,10),
+    bm ~ dnorm(0,10)
+  ), 
+  data=d)
+
+precis(m10.7, depth=2)
+```
+
+```{r, results='hide'}
+# create covariate data for combination of unique values
+d.pred <- expand.grid(male=unique(d$male),
+                      dept.id=unique(d$dept.id))
+
+# predictions
+link.m10.7 <- link(m10.7, data=d.pred)
+
+# summarize
+pred.p <- apply(link.m10.7,2,mean)
+pred.p.PI <- apply(link.m10.7,2,PI)
+
+preds <- d.pred %>%
+  mutate(average = pred.p,
+         p5 = pred.p.PI[1,],
+         p95 = pred.p.PI[2,])
+```
+
+
+```{r, echo=F, fig.width=7,fig.height=7}
+d.plot <- d %>%
+  group_by(dept.id,male) %>%
+  summarize(admit.prop = admit/applications) %>%
+  ungroup() %>%
+  left_join(preds,by=c("male","dept.id")) %>%
+  mutate(gender=ifelse(male==1,"male","female"),
+         dept=d$dept) 
+
+ggplot(d.plot) + 
+  geom_line(aes(gender,admit.prop,group=dept.id,color=dept)) +
+  geom_point(aes(gender,admit.prop,group=dept.id,color=dept)) +
+  geom_pointrange(aes(x=gender,y=average,ymin=p5,ymax=p95,group=1), alpha=0.5) +
+  geom_line(aes(x=gender,y=average, group=1), linetype="dashed") +
+  facet_wrap(~dept) +
+  theme_bw() +
+  labs(y="proportion admitted") +
+  ggtitle("Posterior predictive check")
+```
+
+### Logistic regression using GLM 
+
+If we are ok with flat priors, we can use the R `glm` function.
+
+```{r}
+m10.7glm <- glm(cbind(admit,reject) ~ male + dept, data=d, family=binomial)
+precis(m10.7glm)
+precis(m10.7,depth=2)
+```
+
+To compare the estimates you have to add each parameter the intercept for the glm model. We can also use glimmer to create the formula for `map` and `map2stan`:
+
+```{r}
+glimmer(cbind(admit,reject) ~ male + (1|dept) - 1, data=d, family=binomial)
+```
+
+## Poisson regression
+
+When a binomial distribution has a very small probability of event $p$ and a large number of trials $n$, then it takes on a shape where the mean ($np$) and variance ($np(1-p)$) are basically the same, and this is referred to as the *poisson distribution*. This is helpful when the number of trials *n* is very large or even unknown, as the poisson is described by only one parameter, $\lambda$. The glm for the poisson uses a log-link function:
+
+$$
+\begin{aligned}
+y_i &\sim Poisson(\lambda_i) \\
+log(\lambda_i) &= \alpha + \beta x_i
+\end{aligned}
+$$
+
+Where $\lambda$ is the expected values and The log-link ensures that the $\lambda$ is positive, which is required for a distribution of counts. $\lambda$ is also commonly thought of as a rate. Suppose that two teams go out and count the number of *Brook Silverside* fish in two different tributaries. One team aggregates the count by hour and the other by the day. You could analyze both of these in the same model using a poisson distribution. $\lambda$ is equal to the number of events, $\mu$, per unit time or distance, $\tau$:
+
+$$
+\begin{aligned}
+y_i &\sim Poisson(\lambda_i) \\
+log(\lambda_i) &= log\frac{\mu_i}{\tau_i} = \alpha + \beta x_i \\
+log(\lambda_i) &= log(\mu_i) - log(\tau_i) = \alpha + \beta x_i \\
+log(\mu_i) &= log(\tau_i) + \alpha + \beta x_i
+\end{aligned}
+$$
+If different observations have differnt "exposures", then the expected value of row $i$ is given in the last line above. If $\tau_i=1$ then $log(\tau_i)=0$, but if exposures vary accross cases, the $\tau_i$ term will scale the expected number of events by just including $\tau$ as a column as including it like a predictor.
+
+### example of Poisson model
+
+The data is a description of numbers of tools used by different cultures in the ocean islands of Oceania. It has only 10 rows:
+
+```{r}
+data(Kline)
+d <- Kline
+print(d, row.names=F)
+```
+
+The model is built on the theory that (1) the order of magnitude of the population is related to the number of tools (i.e., $log(pop)$), (2) the number of tools increases with the contact rate via an interaction between high contact and $log(pop)$.
+
+$$
+\begin{aligned}
+t_i &\sim Poisson(\lambda_i) \\
+log(\lambda_i) &= \alpha + \beta_plog(p_i) + \beta_c c_i + \beta_{pc}(c_i*log(p_i)) \\
+\alpha &\sim N(0,100) \\
+\beta_p &\sim N(0,1) \\
+\beta_c &\sim N(0,1) \\
+\beta_{pc} &\sim N(0,1) \\
+\end{aligned}
+$$
+
+```{r}
+d <- d %>%
+  mutate(log.pop = log(population),
+         contact.high = ifelse(contact=="high",1,0))
+
+m10.8 <- map(
+  alist(
+    total_tools ~ dpois(lambda),
+    log(lambda) <- a + bp*log.pop + bc*contact.high + bpc*log.pop*contact.high,
+    a ~ dnorm(0,100),
+    bp ~ dnorm(0,1),
+    bc ~ dnorm(0,1),
+    bpc ~ dnorm(0,1)
+  ), 
+  data=d)
+```
+
+The book goes into several pages of diagnostics for this specific example. I do not go into that here because it is not a particular problem I am interested in, but it is worth revisiting at another time. I just skip straight to the predictions here.
+
+```{r, results='hide'}
+# make prediction data set
+d.pred <- expand.grid(log.pop = seq(from=min(d$log.pop)-1,
+                                    to=max(d$log.pop)+1,
+                                    length.out=30),
+                      contact.high = unique(d$contact.high))
+
+# make posterior predictions
+lambda.pred <- link(m10.8, data=d.pred)
+lambda.med <- apply(lambda.pred,2,median)
+lambda.PI <- apply(lambda.pred,2,PI)
+
+# create plotting data
+d.plot <- d.pred %>%
+  mutate(med = lambda.med,
+         low = lambda.PI[1,],
+         high = lambda.PI[2,],
+         contact = ifelse(contact.high==1,"high","low")) 
+
+# plot predictions
+ggplot(d.plot) + geom_line(aes(log.pop,med,color=contact)) +
+  geom_ribbon(aes(log.pop,ymin=low,ymax=high,fill=contact),alpha=0.3) +
+  geom_point(data=d,aes(log.pop, total_tools, color=contact)) +
+  coord_cartesian(xlim=c(6,12.5),ylim=c(0,100)) + 
+  theme_bw() +
+  labs(x="log(population)",y="total tools") +
+  ggtitle("Posterior predictions",
+          subtitle="The actual data are plotted as points")
+
+# plot predictions #2
+ggplot(d.plot) + geom_line(aes(log.pop,med)) +
+  geom_ribbon(aes(log.pop,ymin=low,ymax=high),alpha=0.3) +
+  geom_point(data=d,aes(log.pop, total_tools)) +
+  coord_cartesian(xlim=c(6,12.5),ylim=c(0,100)) + 
+  facet_wrap(~contact) +
+  theme_bw() +
+  labs(x="log(population)",y="total tools") +
+  ggtitle("Posterior predictions",
+          subtitle="The actual data are plotted as points")
+```
+
+### Poisson regression varying exposures
+
+Recall the previous example about two teams that go out an count the number of *Brook Silverside* fish in two different tributaries, and one team aggregates the counts by days (8 hr days), and the others by hour. Let's simulate one month of team one counting $lambda=2$ fish per hour and team two counting $lambda=12$ fish per 8 hours (1.5 fish/hr).
+
+```{r}
+# 1 week for team one
+num_hours = 8*7
+lambda1 = 2
+y1 <- rpois(num_hours,lambda1)
+
+# 1 week for team two
+num_days = 7
+lambda2 = 1.5*8
+y2 <- rpois(num_days,lambda2)
+
+# combine into data frame
+d <- data.frame(y = c(y1,y2),
+                hours = c(rep(1,8*7),rep(8,7)),
+                stream = c(rep(0,8*7),rep(1,7)))
+
+print(d[53:60,])
+```
+
+We derived how to include varying exposure in the beginning of this section: we just include the log(time) as a predictor:
+
+```{r}
+d <- mutate(d, log.hours=log(hours))
+
+m10.9 <- map(
+  alist(
+    y ~ dpois(lambda),
+    log(lambda) <- log.hours + a + b*stream,
+    a ~ dnorm(0,1),
+    b ~ dnorm(0,1)
+  ), 
+  data=d)
+
+post <- extract.samples(m10.9)
+lambda1.post <- exp(post$a)
+lambda2.post <- exp(post$a + post$b)
+plot(precis(data.frame(lambda1.post,lambda2.post)))
+```
+
+The model was able to recover that team 1 counted around 2 fish per hour, and team 2 counted around 1.5 fish per hour. 
+
+## Other count regressions
+
+This section was difficult to follow so I dont include a bunch of information here. I will just have to do some more research if I want to use the models listed here.
+
+### Multinomial
+
+The multinomial is the maxent distribution when more than two types of unordered events are possilbe and the probability of each event is constant accross trials. Think of pulling marbles out of a bag where there are 3 different colors that are present in contant proportions. The binomial is a special case of a multinomial. I am going to provide the equations to calculate the probabilities, and then do a short example before moving on.
+
+$$
+P(y_1,...,y_k|n,p_1,...,p_k) = \frac{n!}{\prod_iy_i!}\prod_{i=1}^kp_i^{y_i}
+$$
+
+This is equivilant to:
+
+$$
+P(y_1,...,y_k|n,p_1,...,p_k) = \frac{n!}{(y_1!),...,(y_k!)}(p_1^{y_1}),...,(p_1^{y_k})
+$$
+Where $y$ is the number of "successes" for each possibility $k$. The fraction with $n!$ in the numerator just counts the number of different ordering that can give the counts $y_1,...y_k$. An example should make everything clear. There is a bag with 8 marbles: 4 blue, 2 white, and 2 red. You reach into the bag and make 5 draws with replacement (so the probabilities stay the same). What is the probability of drawing 1 blue, 1 white, and 3 reds?
+
+```{r}
+# establish proportions
+size <- 8
+p_blue <- 4/size # 0.5
+p_white <- 2/size # 0.25
+p_red <- 2/size # 0.25
+
+# simulate draws
+n=5
+y_blue <- 1
+y_white <- 1
+y_red <- 3
+
+# explicit multinomial
+orderings <- ((n*4*3*2*1)/(1*1*(3*2*1))) # = 20
+orderings*(p_blue^y_blue)*(p_white^y_white)*(p_red^y_red)
+
+# r function
+dmultinom(c(y_blue,y_white,y_red),size=5,prob=c(p_blue,p_white,p_red))
+```
+
+You can expect to draw 1 blue, 1 white, and 3 reds around 4% of the time. 
+
+A model built using a multinomial distribution is refered to a *categorical regression* or, in machine learning, *maximum entropy classification*. A common link function for multinomial logistic regression is the "softmax" (i.e., normalized exponential) function:
+
+$$
+P(k|s_1,s_2,...,s_k) = \frac{exp(s_k)}{\sum_{i=1}^k exp(s_i)}
+$$
+Where $s$ is a vector of scores. I really do not understand the examples in the book and will just revisit this in the future if I am ever doing this type of modeling.
+
+### Geometric Distribution
+
+Sometimes we are trying to count the number of events up until some exciting event (i.e., the terminating event). This is often referred to as *event history analysis* or *survival* analysis. When the probability of the terminating event is constant through time or space, and the units of time or space are discrete, this is often modeled using a geometric likelihood distribution.
+
+$$
+p(y|p) = p(1-p)^{y-1}
+$$
+
+Where $y$ is the number of time steps (events) until the terminating event occured and $p$ the is the probability of that event in each step. The distribution is maxent for unbounded counts with a constant expected value. 
+
+```{r}
+# simulate data
+N <- 100
+x <- runif(N)
+y <- rgeom(N, prob=logistic(-1 + 2*x))
+
+d <- data.frame(y,x)
+
+# estimate
+m10.10 <- map(
+  alist(
+    y ~ dgeom(p),
+    logit(p) <- a + b*x,
+    a ~ dnorm(0,10),
+    b ~ dnorm(0,1)
+  ),
+  data=d)
+
+plot(precis(m10.10))
+```
+
+### Negative-binomial and beta-binomial
+
+The next chapter has more details, but we use these distributions when the counts are *overdispersed*: when the variation in the counts exceeds what we'd expect form a pure binomial or poisson process. 
+
+## Homework
+
+**(10E1)**
+What is the log odds of 0.35?
+
+```{r}
+log(0.35/(1-0.35))
+```
+
+**(10E2)**
+What is the probability of an event with log odds of 3.2?
+
+```{r}
+logistic(3.2)
+```
+
+**(10E3)**
+
+A coefficient in logistic regression is 1.7, what does this imply about the proportional change in odds of an outcome? We are wanting to compare the odds of an event before and after we increse the the predictor by one unit. Let's call the proportional change in odds $Z$, and we know we want to increase the predictor by one unit:
+
+$$
+\exp(\alpha+\beta x)Z = \exp(\alpha+\beta (x+1))
+$$
+and solve for $Z$,
+
+$$
+\begin{aligned}
+(\alpha+\beta x) * log(Z) &= \alpha+\beta (x+1) \\
+log(Z) &= \frac{\alpha+\beta x + \beta}{\alpha+\beta x} \\
+log(Z) &= \beta\\
+Z &= \exp(\beta)
+\end{aligned}
+$$
+ 
+```{r}
+exp(1.7)
+```
+
+Each unit change in the predictor multiplies the odds of the event by 5.5.
+
+**(10H3)**
+
+Load `eagle` dataset. The data records attempts of eagles to fly in and pirate the salmon of another eagle. The bird pirating is called the "pirate", and the other bird is the "victim".
+
+```{r}
+library(MASS)
+select <- dplyr::select
+
+# load data
+data(eagles)
+d <- eagles 
+print(d,row.names=F)
+```
+
+Where y is the number of successful attempts, n is the total number of attempts, P and V are indicator variables describing whether or not the pirate or victim bird had a large body size, and A is an indicator variable describing whether the pirating bird was an adult. We want to build a binomial GLM of successful pirating attempts. 
+
+$$
+\begin{aligned}
+y_i &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha + \beta_P P_i + \beta_V V_i + \beta_A A_i \\
+\alpha &\sim N(0,10) \\
+\beta_P &\sim N(0,5) \\
+\beta_V &\sim N(0,5) \\
+\beta_A &\sim N(0,5) 
+\end{aligned}
+$$
+```{r}
+# add male dummy variable
+d <- d %>%
+  mutate(P_large=ifelse(P=="L",1,0),
+         V_large=ifelse(V=="L",1,0),
+         P_adult=ifelse(A=="A",1,0))
+
+m10.H31 <- map(
+  alist(
+    y ~ dbinom(n,p),
+    logit(p) <- a + bp*P_large + bv*V_large + ba*P_adult,
+    a ~ dnorm(0,10),
+    bp ~ dnorm(0,5),
+    bv ~ dnorm(0,5),
+    ba ~ dnorm(0,5)
+  ), 
+  data=d)
+
+precis(m10.H31)
+```
+
+```{r, results='hide'}
+# reestimate using stan
+m10.H31.stan <- map2stan(m10.H31)
+```
+
+```{r}
+precis(m10.H31.stan)
+pairs(m10.H31.stan)
+```
+
+The estimates are different because both $\beta_P$ and $\beta_V$ are hitting floor and ceiling effects (notice the skew). Basically, being large makes such a big difference that alot of values are possible. The next step is to interpret the estimates. We could either look at each one individually: e.g., when all the predictors are at zero (small non adult pirate and victim):
+
+```{r}
+logistic(0.66)
+```
+
+Which means 66% of the attempts are expected to succeed. Or we can just plot everything:
+
+```{r, fig.width=7}
+p <- link(m10.H31.stan)
+
+p.mean <- apply(p, 2, mean)
+p.PI <- apply(p, 2, PI)
+
+d.plot <- d %>%
+  mutate(p = y/n,
+         average = p.mean,
+         low = p.PI[1,],
+         high = p.PI[2,],
+         pirate_size = ifelse(P=="L","large","small"),
+         victim_size = ifelse(V=="L","large","small"),
+         pirate_age = ifelse(A=="A","Adult","Non-adult"))
+
+ggplot(d.plot, aes(pirate_size,p,group=victim_size)) + 
+  geom_point() +
+  geom_line(aes(linetype=victim_size)) + 
+  geom_pointrange(aes(x=pirate_size,y=average,ymin=low,ymax=high,color=victim_size),alpha=0.7) +
+  facet_wrap(~pirate_age) +
+  theme_bw() +
+  ggtitle("Posterior predictive plots of Eagle pirating attempts",
+          subtitle="The Adult and Non-Adult titles above each facet describe the age of the Pirate")
+```
+
+Those plots show that the model does ok when the pirating bird is an adult, but let's see if an interaction between pirate size and age improves the predictions.
+
+```{r,results='hide'}
+m10.H32.stan <- map2stan(
+  alist(
+    y ~ dbinom(n,p),
+    logit(p) <- a + bp*P_large + bv*V_large + ba*P_adult + bpa*(P_large*P_adult),
+    a ~ dnorm(0,10),
+    bp ~ dnorm(0,5),
+    bv ~ dnorm(0,5),
+    ba ~ dnorm(0,5),
+    bpa ~ dnorm(0,5)
+  ), 
+  data=d)
+```
+
+```{r}
+compare(m10.H31.stan, m10.H32.stan)
+```
+
+```{r}
+p <- link(m10.H32.stan)
+
+p.mean <- apply(p, 2, mean)
+p.PI <- apply(p, 2, PI)
+```
+
+```{r,echo=F,fig.width=7}
+d.plot <- d %>%
+  mutate(p = y/n,
+         average = p.mean,
+         low = p.PI[1,],
+         high = p.PI[2,],
+         pirate_size = ifelse(P=="L","large","small"),
+         victim_size = ifelse(V=="L","large","small"),
+         pirate_age = ifelse(A=="A","Adult","Non-adult"))
+
+ggplot(d.plot, aes(pirate_size,p,group=victim_size)) + 
+  geom_point() +
+  geom_line(aes(linetype=victim_size)) + 
+  geom_pointrange(aes(x=pirate_size,y=average,ymin=low,ymax=high,color=victim_size),alpha=0.7) +
+  facet_wrap(~pirate_age) +
+  theme_bw() +
+  ggtitle("Posterior predictive plots of Eagle pirating attempts with interaction",
+          subtitle="The Adult and Non-Adult titles above each facet describe the age of the Pirate")
+```
+
+
+

@@ -1,0 +1,211 @@
+---
+title: "SR chapter 9: Entropy and GLMs"
+author: "scworland@usgs.gov"
+date: "Feb 17 2017"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+## Preface
+
+This chapter motivates the distributions used for the likelihood in GLMs using maximum entropy. I include some of the information about entropy from the chapter in this document, but I also skip over a good portion of it.
+
+## Maximum entropy
+
+The distribution that can happen the most number of ways has the biggest information entropy. Commonly used distributions for GLMs all have maximum entropy (maxent) for a given set of constraints. Another way to think of it is that maxent distributions are the flattest given a set of constraints. The normal distribution can be shown to have the highest entropy for any distribution of all reals ($-\infty$ to $+\infty$) and a finite variance. 
+
+## Binomial distribution
+
+Recall the binomial distribution can be written as,
+
+$$
+P(y|n,p) = \frac{n!}{y!(n-y)!}p^y(1-p)^{n-y}
+$$
+
+and can be simplified as,
+
+$$
+P(y_1,y_2,...,y_n|n,p) = p^y(1-p)^{n-y}
+$$
+
+Where $p$ is the probability of a "success", $y$ is the number of successes, and $n$ is the number of trials. The two constraints on this distribution is that there are (1) only two unordered events, and (2) there is a constant expected value (i.e., constant $p$). We can show that the binomial distribution has the highest entropy for these constraints. Imagine there is a bag with 7 blue marbels and 3 white marbels, where drawing a blue marble is a "success". The expected value is 1.4 blue marbels in every two draws. $n=2$ and a white marbel = 0 and a blue marbel =1. We can use the binomial distribution to calculate the probabilities of each possibility: $P(ww)=(1-p)^2$, $P(bw)=p(1-p)$, $P(wb)=(1-p)p$, $P(bb)=p^2$.
+
+```{r}
+p <- 0.7
+A <- c((1-p)^2, p*(1-p), (1-p)*p, p^2)
+print(A)
+```
+
+We can calculate the entropy A:
+
+```{r}
+-sum(A*log(A))
+```
+
+We can now simulate a bunch of other distributions with an expected value of 1.4 and and compare the entropies:
+
+```{r, cache=T}
+sim.p <- function(G=1.4) {
+  x123 <- runif(3) # sample 3 numbers
+  x4 <- (G*sum(x123)-x123[2]-x123[3])/(2-G) # solve for 4th using G
+  p <- c(x123,x4)/sum(c(x123,x4)) # calculate probabilities
+  list(h=-sum(p*log(p)),p=p) # entropy and probs
+}
+
+H <- replicate(1e5, sim.p(1.4))
+entropies <- as.numeric(H[1,])
+distributions <- H[2,]
+```
+
+We can double check that the maximum entropy has the same probabilities as we calculated above:
+
+```{r, echo=F}
+max(entropies)
+A.sim <- distributions[which.max(entropies)][[1]]
+print(round(A.sim,2))
+```
+
+We can plot the calcuated distribution using grey bars and the simulated distribution with the greatest entropy as red dots:
+
+```{r,echo=F}
+A.plot <- data.frame(event=c("ww","bw","wb","bb"),prob=A,
+                     prob.sim=A.sim)
+
+ggplot(A.plot) + 
+  geom_col(aes(event,prob),width=0.2, alpha=0.8) + 
+  geom_point(aes(event,prob.sim),color="red",size=2) +
+  theme_bw()
+```
+
+The take-away from this is that the binomial distribution spreads probability out as evenly as possible with the above constraints. 
+
+## Generalized Linear Models
+
+A Gaussian model first assumes a Gaussian distribution over the outcomes, and then defines the mean of the distribution with a linear model, which resulted in the following type of likelihood definitions:
+
+$$
+\begin{aligned}
+y_i &\sim N(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta x_i
+\end{aligned}
+$$
+When the outcome variable is continuous and far from any theoretical maximum or miminum values, the Gaussian model has maximum entropy. The generalized linear model is used in cases when the outcome variable has different contraints (e.g., greater than zero), and we want to replace the variable describing the shape of the distribution with a linear model. Below is an exmaple for the Binomial distriubiton:
+
+$$
+\begin{aligned}
+&y_i \sim Binomial(n,p_i) \\
+&f(p_i) = \alpha + \beta x_i
+\end{aligned}
+$$
+
+The likelihood function is now a Binomial distribution rather than a Gaussian. There is also a *link function* to describe the parameter $p$ using a linear model. A Guassian distribution is easy, because $\mu$ is an unbounded parameter which represents the average. The average of a binomial distribution is equal to $np$, and we usually know $n$ and not $p$, so we often model the unknown part (i.e., $p$). But $p_i$ is a probability mass and must lie between 0-1, so we have to find a way to constrain the linear model between 0-1, and hence the link function. 
+
+The book has suggests against "divining a link function from a histogram of the data". This is because the likelihood is Gaussian not because the outcome is Gaussian but because the residuals are normally distrubted, and this can only be obtained *after fitting the model*.
+
+## Exponential family
+
+Most all models used in statistical modeling use distributions from the exponential family. Each member is a maxent distribution for some set of constraints. The below figure is from the book:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=200pt]{figures/exp_family.pdf}
+\end{figure}
+
+The **exponential distribution** is maxent distribution for events that represent some displacement from a reference accross time or space, or said another way, for non-negative distributions with the same average displacement. Its rate is described by a single rate parameter, $\lambda$ and $\lambda^{-1}$ is the average displacement. 
+
+The **Gamma distribution** is also constrained to be greater than zero and results when an event can only happen when two or more exponential distributed events can happen. It is the maxent distribution among all distributions with the same mean and same average logarithm. Its shape is described by two parameters, $\lambda$ and $k$.
+
+The **Poisson distribution** is used for count data that doesn't have a theoretical maximum. The binomial distribution converges to a Poisson distribution when the number of trials, $n$, is large and the probability of success, $p$, is very small, where the expected rate of events is $\lambda=np$. It has the same contraints and the same entropy of the binomial distribution. 
+
+## Linking linear models to distributions
+
+We need to attach a linear model to a parameter of a distribution that describes it's shape. This normally requires a link function to avoid things like probability masses greater than one or negative distances. The link function maps the linear space of a model like $\alpha + \beta x_i$ onto the non-linear space of a parameter $\theta$. For mist GLMS we can use the *logit* link or *log* link. 
+
+The *logit link* maps a parameter defined as a probability mass (i.e., 0-1) onto a linear model that can take on any real value:
+
+$$
+\begin{aligned}
+&y_i \sim Binomial(n,p_i) \\
+&logit(p_i) = \alpha + \beta x_i
+\end{aligned}
+$$
+
+where the logit function is defined as the log odds:
+
+$$
+logit(p_i) =log\frac{p_i}{1-p_i}
+$$
+where the odds of an event is just the probability that something happens divided by the probability that is does not happen. If we set the linear model = to the log odds and solve for $p_i$:
+
+$$
+\begin{aligned}
+&log\frac{p_i}{1-p_i} =  \alpha + \beta x_i \\ \\
+&p_i = \frac{exp(\alpha+\beta x_i)}{1 + exp(\alpha + \beta x_i)}
+\end{aligned}
+$$
+
+And we arrive at the logistic function (sometimes called the inverse-logit because it inverts the logit transform). The value of the parameter being modeled is the logistic transform of the linear model. We can show this by generating some data:
+
+```{r}
+# generate data
+x <- -seq(-5,5,0.1)
+y <- x + rnorm(101,0,1)
+
+# build model
+lm1 <- lm(y~x)
+
+# extract parameters
+alpha <- coefficients(lm1)[1]
+beta <- coefficients(lm1)[2]
+
+# linear model
+lin_mod <- alpha + beta*x
+
+# logistic link function
+p <- exp(lin_mod)/(1+exp(lin_mod))
+```
+
+```{r, echo=F,fig.width=7}
+p1 <- ggplot() + geom_line(aes(x,lin_mod)) + theme_bw() + ggtitle("Linear model") + labs(y=expression(hat(y)))
+p2 <- ggplot() + geom_line(aes(x,p)) + theme_bw() + coord_cartesian(ylim=c(0,1)) + ggtitle("Logit link")
+grid.arrange(p1,p2,nrow=1)
+```
+
+The compression that occurs when moving from linear space to probability space affects the interpretation of parameter estimates. A unit change in predictor variable $x$ no longer indicates a constant change inthe mean of the outcome variable (non linear near the edges). This means that for GLMs the regression coefficients do not produce a constant change on the outcome scale. This means the parameters bacsically interact with themselves, as the impact of a predictor depends on the value of the predictor before the change. We can see this if we take the derivative of $\beta$ with respect to $x$ for the linear model:
+
+$$
+\frac{\partial \mu }{\partial x} = \beta
+$$
+which does not have x in the derivative. However, for the logit:
+
+$$
+\frac{\partial p }{\partial x} = \frac{\beta}{2(1+cosh(\alpha+\beta x))}
+$$
+
+the derivative retains $x$.
+
+The *log link* maps a parameter that is defined only over positive reals. For example, the $\sigma$ of a gaussian distribution has to be > 0. The model would look like:
+
+$$
+\begin{aligned}
+&y_i \sim N(\mu,\sigma_i) \\
+&log(\sigma_i) = \alpha + \beta x_i \\
+& \sigma = exp(\alpha + \beta x_i)
+\end{aligned}
+$$
+
+The log link implies an exponential scaling of the outcome with the predictor variable, where a unit change in a predictor variable changes the outcome by an order of magnitude.
+
+
+
+
+

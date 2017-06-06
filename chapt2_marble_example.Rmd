@@ -1,0 +1,91 @@
+---
+title: "Probability Marble Example"
+author: "scworland@usgs.gov"
+date: "July 15, 2016"
+output: pdf_document
+---
+
+---
+title: "Statistical Model design"
+author: "scworland@usgs.gov"
+date: "July 7, 2016"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+pacman::p_load(coda,mvtnorm,rethinking)
+```
+
+
+## Statistical Rethinking Chapter 2
+
+### Example 1: Garden of Forking Data
+
+Story that that provides metaphor for first example: [garden of forking paths](http://www.cems.uvm.edu/~rsnapp/teaching/cs32/homework/borges_garden.pdf)
+
+
+__problem:__ There is a bag with 4 marbles and we know they can either be all white, all blue, or some combination of blue and white. Without any futher information, we would say each of the 5 possibilities are equally probable (uniform, or "flat", priors). We then draw three marbles, with replacement, and the result is blue-white-blue (data).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.1.png}
+\end{figure}
+
+__question:__ Can we use this data to update our "beliefs" about the probabilites? ie. are each of the 5 possibilites still equally probable?
+
+__approach:__ (1) Count all the ways that _each_ of the 5 possibilities could happen based on three draws, and eliminate ways (ie. "paths") that are not consistent with the data we observed. For example, let's just look at the second possibility above where there is 1 blue and 3 white: 
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=100pt]{figures/fig2.2.png}
+\end{figure}
+
+\newpage 
+
+The first question ignores the data: how many ways can we make three draws that is consistent with our conjecture (hypothesis) of 1 blue and 3 white marbles? ie. How many ways can we draw three marbels and not rule out that the proportion is 1 blue to 3 white? We can illustrate the draws by building a "tree" of forking possibilities:  
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.3.png}
+\end{figure}
+
+The figure above indicates that there are 64 possible ways to draw three marbles and not rule out the conjecture. Now we look at our data and ask, "which paths are consistent with the hypothesis given the data"?:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.4.png}
+\end{figure}
+
+We can eliminate all but three of the paths. What have we figured out? We have gained some idea about the probability of conjecture two being correct, but it is pretty meaningless by itself. We want to know the relative probability of all of the possibilities given our data. We can rule out hypothesis 1 and 5 because we know that there is at least 1 blue and 1 white marble. We also know that there are 3/64 paths for hypothesis 2:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=125pt]{figures/fig2.5.png}
+\end{figure}
+
+\newpage
+
+Now we just repeat the forking paths for the other two possible hypotheses:
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.6.png}
+\end{figure}
+
+Now we simply divide the number of ways to obtain our data for each hypothesis [`c(3,8,9)`] by the sum all the possible ways [`sum(c(3,8,9))`] to obtain normalized plausibilities [`c(3,8,9)/sum(c(3,8,9))`]:
+
+```{r}
+ways = c(3,8,9)
+sum.ways = sum(c(3,8,9))
+ways/sum.ways
+```
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=300pt]{figures/fig2.7.png}
+\end{figure}
+
+
+

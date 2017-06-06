@@ -1,0 +1,529 @@
+---
+title: "SR chapter 6: Information criteria"
+author: "scworland@usgs.gov"
+date: "December 29, 2016"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+# Chapter 6
+
+This chapter deals with the tradeoff between model simplicity and accurate predictions. On one hand, there are dangers to learning too much from the data and *overfitting* (i.e., high variance), and on the other, if we learn too little from the data, we suffer from *underfitting* (i.e., high bias). Several options are:
+
+1. Use a **regularizing prior** (or **penalized likelihood** for a frequentist model). This is basically telling the model to not get too excited by the data.
+2. Use **information criteria**
+
+There is a good deal of interesting information in this chapter that I am not reproducing in this document because I am already very familiar with it, however, it is worth reading! One interesting idea I was not familiar with is *minimum description length*. This is the notion that building a model is a type of data compression, where we can recode the data into a compressed format (while loosing some information). If we choose a model with the number of parameters as data, then we do not gain any compression and have just recast the data into a new format using parameters insted of the the actual data points. Nothing is gained from this last example.
+
+## Information Theory
+
+The first step is to choose some criterion of model performance, or a *target*. Defining the target requires us to consider two main dimensions: (1) a *cost-benefit analysis*: how much does it cost when we are wrong or what do we win when we are right? (2) *Accuracy in context*: choose between accuracy and reasonable complexity. Information theory uses the out-of-sample deviance as the target.
+
+### Average vs joint probability targets
+
+The average probability of a model being correct will not always identify the most accurate model, and instead, we want to use the joint probability as the target. Here is an example to explain this idea. The table below shows 10 days of weather and the weather predictions of two people where the numbers are the probability that there will be rain.
+
+```{r, echo=F,results='asis'}
+d <- data.frame(weather=c(rep("rain",3),rep("sun",7)),
+                person_1=c(1,1,1,rep(0.6,7)),
+                person_2=rep(0,10))
+
+tab <- xtable(d)
+
+print(tab,include.rownames=F,comment = F)
+```
+
+
+The average probability for person 1 is $(3 \times 1 + 7 \times 0.4)/10 = 0.58$, and for person 2 the average probability is $(3 \times 0 + 7 \times 1)/10 = 0.70$, which would suggest that the predictions of person 2 is "better" than the predictions of person 1. The joint probability requires taking the whole sequence into account. So we are asking, "how well does each person do at predicting the weather accross all days". This is kind of a weird example, but we want to take the joint probability of being "right" each day, so for person one, it is: $1^3 \times 0.4^7 = 0.002$, and for person two it is: $0^3 \times 1^7 = 0$. The joint probability is just the likelihood, and is what we are trying to maximize. 
+
+### Information Entropy
+
+How much information is derived from learning the actual outcome (i.e., the weather in the above example)? In the context of information theory, information is defined as the *reduction in uncertainty from learning the outcome*, and is quantified by finding a precise measure of the decrease in uncertainty. The first step is to find a principled way to quantify the uncertainty in a probability distribution:
+
+1. The measure of uncertainty should be continuous.
+2. The measure of uncertainty should increase as the number of possible events increases. For example, if an outcome with only 10 possible values should have less uncertainty than an outcome with 100 possible values. 
+3. The measure of uncertainty should be additive. 
+
+These 3 desiderata are met by *information entropy*. The basic idea of information entropy is, "the more surprising something is, the more information it provides", or said another way, entropy measures how hard it is to hit a target. Below is formula for entropy, and then it is followed by an example. If there are $n$ possible events, and each possible event $i$ has the probability of of $p_i$, and we call the list of probabilities $p$, then entropy is defined as,
+
+$$
+H(p) = - \sum_{i=1}^np_ilog(p_i)
+$$
+
+Ex. In seattle, the probability for rain on December 1st is 82%, while the probability for rain on May 1st is 55%. Below is chart for the two events (rain or no rain) and their probabilities for the two days,
+
+```{r, echo=F, results='asis'}
+seattle <- data.frame(rain=c(0.82,0.55),
+                      sunshine=c(0.18,0.45),
+                      row.names=c("Dec 1","May 1"))
+
+tab <- xtable(seattle)
+print(tab,include.rownames=T,comment = F) 
+```
+
+We can calcuate the entropy for each day based off the two events (ran or sunshine) and their probabilities:
+
+```{r}
+H <- function(p){-sum(p*log(p))}
+```
+
+```{r, echo=F, results='asis'}
+seattle$H[1] <- H(seattle[1,1:2])
+seattle$H[2] <- H(seattle[2,1:2])
+tab <- xtable(seattle)
+print(tab,include.rownames=T,comment = F) 
+```
+
+The entropy is higher for May 1st because the probability of rain is closer to 0.5, so the chance of rain or sunshine is less predictable, and therefore more of a "surprise" than for December 1st, where it is much more likely to rain. It is harder to "hit the target" on May 1st than on December 1st. We can simulate data so show that entropy is maximized when the probabilities for two events are equal to 0.5,
+
+```{r}
+e1 <- seq(0.1,0.9,0.02) # event 1
+e2 <- 1-e1 # event 2
+p <- data.frame(e1,e2) # combine
+
+# apply H(p) to each row
+entropy <- apply(p,1,H)
+```
+
+```{r, echo=F}
+p$H <- entropy
+
+ggplot(p, aes(e1,H)) +
+  geom_point() +
+  geom_line() +
+  theme_bw() +
+  labs(x="Probability of event 1",
+       y="Entropy")
+```
+
+If we added another possible event, let's say snow, then that should increase the entropy (note: I just made up the snow probabilities and adjusted the other to match):
+
+```{r, echo=F, results='asis'}
+seattle <- data.frame(rain=c(0.70,0.55),
+                      sunshine=c(0.15,0.44),
+                      snow=c(0.15,0.01),
+                      row.names=c("Dec 1","May 1"))
+
+seattle$H[1] <- H(seattle[1,1:3])
+seattle$H[2] <- H(seattle[2,1:3])
+
+tab <- xtable(seattle)
+print(tab,include.rownames=T,comment = F) 
+```
+
+Because it is more likely to snow in December than it May, it increases the entropy of December 1st by a lot more than it does the entropy of May 1st.
+
+### Divergence
+The previous examples are describing the entropy of probabilities derived from real systems (other than the snow portion), but what if we model these probabilities? How much entropy to we introduce by our model? This "excess entropy" is referred to as the *Kullback-Leibler divergence*, or $D_{KL}$ and arises when we use probabilities from one distribution (i.e., our model) to describe another distribution (i.e., the real probabilities). Using our previous example, the probability of rain and sunshine for December 1st is $p=\{0.82,0.18\}$, and let's pretend we have a model that predicts the probabilities $q$, where $q=\{0.75,0.25\}$. The divergence is the difference between the entropies of these two probability lists:
+
+$$
+D_{KL}(p,q) = \sum_i p_i(log(p_i)-log(q_i)) = \sum_i p_i log \left(\frac{p_i}{q_i}\right)
+$$
+
+So lets say we had two predicted probabilities, $q1=\{0.75,0.25\}$ and $q2=\{0.60,0.40\}$, then we can calculate the divergence for these two "models":
+
+```{r}
+D <- function(p,q){sum(p*log(p/q))}
+
+p <- c(0.82,0.18)
+q1 <- c(0.75,0.25)
+q2 <- c(0.60,0.40)
+
+D(p,q1)
+D(p,q2)
+```
+
+The second model has a higher divergence because it's predicted probabilities are further away from the actual probabilities.
+
+### Deviance
+
+In reality we would not actually have the probability distribution $p$ that we are trying to model (or we wouldn't need the model!). What we normally have is several different estimates, like $q1$ and $q2$, and we want to compare those. Recall from grid approximation that when we are calculating the likelihood, $p(D|H)$ = the probability of the data given our model, that provided a lot of information about how the probability of a certain model. First I will define deviance and then show an example. The deviance of a particular model is,
+
+$$
+D(q) = -2 \sum_i log(q_i)
+$$
+
+where $qi$ is the likelihood of each oberservation. The -2 is only there for historical reasons. We can calculate the log-likelihood for any model. 
+
+```{r}
+# generate a covariate
+x <- 1:100
+
+# generate "real" parameters
+a = 10
+b = 2
+
+# generate a response variable with some noise
+y <- a + b*x + rnorm(100,0,25)
+
+# generate "bad" parameters
+a2 = -50
+b2 = 4
+
+# make predictions of the mean from two models
+m1 <- a + b*x # good model
+m2 <- a2 + b2*x # bad model
+```
+
+```{r, echo=F}
+# combine
+d <- data.frame(y=y,x=x,m1=m1,m2=m2) %>%
+  melt(., id.vars=c("x","y"))
+
+# plot model fits on data
+ggplot(d) + 
+  geom_point(aes(x,y)) +
+  geom_line(aes(x,value,color=variable)) +
+  labs(color="model fit") +
+  theme_bw()
+```
+
+Obviously the first model does a better job, because the response variable was generated using the parameters from the model "m1". The next step is to calculate the deviance for each model:
+
+```{r}
+# log likelihood function
+dev <- function(y,mu,sigma){-2*sum(dnorm(y,mu,sigma,log=T))}
+
+# model 1 deviance
+dev(y,m1,sd(y)) 
+
+# model 2 deviance
+dev(y,m2,sd(y))
+```
+
+The absolute deviance values from each model don't provide any information, but we can compare the deviance values from each model to each other. We want to select the model with the smallest deviance, and in this case, we thankfully are selecting the "true" model! Deviance in the previous example is similar to $R^2$: it is a measure of retrodictive accuracy, not predictive accuracy. In reality what we want to do is compare the deviance for out-of-sample predictions.
+
+## Regularization
+
+Again, I do not go into as much detail as the book (pgs. 186-187), but it is worth re-reading. A regularizing prior just allows us to introduce skepticism for model coefficients that are much different than zero. Common examples are normal or laplace priors.
+
+## Akaike Information Criterion
+
+If a model has (1) flat priors, (2) the posterior distribution is approximately a multivariate Gaussian, and (3) and N >> p, than the AIC approximates the out-of-sample deviance by
+
+$$
+AIC = Dev_{train} + 2p,
+$$ 
+
+where $p$ is the number of parameters. Although this seems unrealistically simple, it is actually a good approximation. Below is a simulation example using the rethinking function `sim.train.test` that just fits a models with a certain number of parameters and returns the in and out of sample deviance. Because single examples can return in sample deviance that is lower than out-of-sample, the book suggest taking the mean of many replicates from the function: 
+
+```{r, cache=T}
+N=50
+kseq <- 1:5
+
+test <- data.frame(parameters=kseq)
+
+for (i in 1:length(kseq)) {
+r <- replicate(500,sim.train.test(N=N, k=i))
+test$dev.in[i] <- mean(r[1,])
+test$dev.out[i] <- mean(r[2,])
+}
+
+dev.rep <- test %>%
+  mutate(AIC=dev.in + 2*parameters) %>%
+  melt(., id.vars="parameters")
+```
+
+```{r, echo=F}
+ggplot(dev.rep,aes(parameters,value,color=variable)) + 
+  geom_point() + 
+  geom_line(aes(linetype=variable)) +
+  scale_linetype_manual(values=c(1,1,2)) +
+  theme_bw() +
+  labs(y="Deviance")
+```
+
+
+## Deviance Information Criterion
+
+DIC is a Bayesian information criteria that is aware of informative priors, however, it also assumes a multivariate Gaussian posterior distribution. Predictions from a Bayesian model reflect the uncertainty embedded in parameter distributions, and the DIC is calculated from the posterior distribution of the posterior deviances (classical deviance is defined at the MAP values). The chain is something like, prior --> posterior --> deviance posterior --> DIC, which reveals how the prior is taken into account. First some definitions: 
+
+- define $D$ as the posterior distribution of deviance (deviance is calculated on every combination of sampled parameter values) 
+- $\bar{D}$ is the average of $D$
+- $\hat{D}$ is the deviance calculated at the posterior mean (deviance is calculated at the mean of each sampled parameter value)
+
+Then DIC is,
+
+$$
+DIC = \bar{D} + (\bar{D}-\hat{D}) = \bar{D} + pD
+$$
+
+In the case of flat priors the DIC reduces to the AIC because $pD$ reduces to the number of parameters.
+
+## Widely Applicable Information Criterion
+
+The WAIC uses a *pointwise* esimate of deviance. I found the definition much more intuitive when following an example, so I take that approach here.
+
+let's start with a simple model: 
+
+```{r}
+data(cars)
+m <- map(
+  alist(
+    dist ~ dnorm(mu,sigma),
+    mu <- a + b*speed,
+    a ~ dnorm(0,10),
+    b ~ dnorm(0,10),
+    sigma ~ dunif(0,30)
+  ), 
+  data=cars)
+
+n_samples = 1000
+post <- extract.samples(m, n=n_samples)
+```
+
+The first part of the WAIC is the log-pointwise-predictive-density (lppd), which is defined as:
+
+$$
+lppd = \sum_{i=1}^N log(Pr(y_i))
+$$
+
+We need to Compute the likelihood, $p(D|H)$, for each observation, $y_i$, using every combination of parameter values sampled from the posterior:
+
+```{r}
+ll <- matrix(data=NA, nrow=nrow(cars), ncol=n_samples)
+
+for(i in 1:n_samples) {
+  mu <- post$a[i] + post$b[i]*cars$speed
+  sigma <- post$sigma[i]
+  ll[,i] <- dnorm(cars$dist, mu, sigma, log=T)
+}
+```
+
+The above code is basically saying "how good does a model with this particular $\mu$ and $\sigma$ do at predicting each observation in our dataset?" The next step is to calculate the lppd by averaging the samples in each row, taking the log, and adding all of the logs together (this step is not yet done in the code chunk directly below). Do to some nuances involved with averaging on the log scale, we use the `log_sum_exp` function from the rethinking package.
+
+```{r}
+lppd <- numeric()
+
+for (i in 1:nrow(ll)){
+  lppd[i] <- log_sum_exp(ll[i,]) - log(n_samples)
+}
+```
+ 
+The next piece to WAIC is the effective number of parameters, $P_{WAIC}$. It is unfortunate that this contains the word "parameters", because the $P_{WAIC}$ will not always be an integer. The best way to think about it is that is measures how flexible a model is. We calculate this by summing the variance in the log-likelihood ($V(y_i)$) for each observation $i$:
+ 
+ $$
+ P_{WAIC} = \sum_{i=1}^N V(y_i)
+ $$
+ 
+```{r}
+pWAIC <- apply(ll,1,var)
+```
+
+The WAIC is calculated by,
+
+$$
+WAIC = -2(lppd - p_{WAIC})
+$$
+
+```{r}
+waic1 <- -2*(sum(lppd) - sum(pWAIC))
+waic1
+```
+
+We can calculate WAIC in R by using the `WAIC` function in the rethinkng package. 
+
+```{r, results='hide'}
+waic2 <- WAIC(m)[1]
+```
+
+```{r}
+waic2
+```
+
+## Using Information Criteria
+
+The book suggest *model comparison* and *model averaging* over *model selection*. I skip over this information and just jump straight into the homeworks, but it is fairly straightforward.
+
+## Chapter 6 homework
+
+**(6E3)**
+
+A loaded 4-sided die has the following probabilities: 1 = 20%, 2 = 25%, 3 = 25%, and 4 = 30%. What is the entropy of this die?
+
+```{r}
+H <- function(p){-sum(p*log(p))}
+H(c(0.2,0.25,0.25,0.3))
+```
+
+**(6H1)**
+
+Fit several models to the following data:
+
+```{r}
+data(Howell1)
+d <- Howell1
+d$age <- scale(d$age)
+
+# split into two sets
+set.seed(1000)
+i <- sample(1:nrow(d),nrow(d)/2)
+
+d1 <- d[i,]
+d2 <- d[-i,]
+```
+
+Set up formulas and starting values:
+
+```{r}
+# model formulas
+f1 <- alist(
+  height ~ dnorm(mu,sigma),
+  mu <- a + b1*age,
+  c(a,b1) ~ dnorm(0,100),
+  sigma ~ dunif(0,50)
+)
+
+f2 <- alist(
+  height ~ dnorm(mu,sigma),
+  mu <- a + b1*age + b2*age^2,
+  c(a,b1,b2) ~ dnorm(0,100),
+  sigma ~ dunif(0,50)
+)
+
+f3 <- alist(
+  height ~ dnorm(mu,sigma),
+  mu <- a + b1*age + b2*age^2 + b3*age^3,
+  c(a,b1,b2,b3) ~ dnorm(0,100),
+  sigma ~ dunif(0,50)
+)
+
+f4 <- alist(
+  height ~ dnorm(mu,sigma),
+  mu <- a + b1*age + b2*age^2 + b3*age^3 + b4*age^4,
+  c(a,b1,b2,b3,b4) ~ dnorm(0,100),
+  sigma ~ dunif(0,50)
+)
+
+f5 <- alist(
+  height ~ dnorm(mu,sigma),
+  mu <- a + b1*age + b2*age^2 + b3*age^3 + b4*age^4 + b5*age^5,
+  c(a,b1,b2,b3,b4,b5) ~ dnorm(0,100),
+  sigma ~ dunif(0,50)
+)
+
+f6 <- alist(
+  height ~ dnorm(mu,sigma),
+  mu <- a + b1*age + b2*age^2 + b3*age^3 + b4*age^4 + b5*age^5 +
+    b6*age^6,
+  c(a,b1,b2,b3,b4,b5,b6) ~ dnorm(0,100),
+  sigma ~ dunif(0,50)
+)
+
+## starting values
+a.start <- mean(d1$height)
+sigma.start <- sd(d1$height)
+```
+
+```{r}
+# fit models 5.7
+m1 <- map(f1, data=d1,
+           start=list(a=a.start,sigma=sigma.start,b1=0))
+
+m2 <- map(f2, data=d1,
+           start=list(a=a.start,sigma=sigma.start,b1=0,b2=0))
+
+m3 <- map(f3, data=d1,
+           start=list(a=a.start,sigma=sigma.start,b1=0,b2=0,
+                      b3=0))
+
+m4 <- map(f4, data=d1,
+           start=list(a=a.start,sigma=sigma.start,b1=0,b2=0,
+                      b3=0,b4=0))
+
+m5 <- map(f5, data=d1,
+           start=list(a=a.start,sigma=sigma.start,b1=0,b2=0,
+                      b3=0,b4=0,b5=0))
+
+m6 <- map(f6, data=d1,
+           start=list(a=a.start,sigma=sigma.start,b1=0,b2=0, 
+                      b3=0,b4=0,b5=0,b6=0))
+```
+
+Compare the models:
+
+```{r}
+compare(m1,m2,m3,m4,m5,m6)
+```
+
+**(6H3)**
+
+Average the top 3 models models based off their Akaike weights and plot:
+
+```{r, fig.height=5, results='hide'}
+age.seq <- seq( from=-2, to=3, length.out=30)
+h.ensemble <- ensemble(m4,m5,m6, data=list(age=age.seq),refresh=0)
+
+mu.mean <- apply(h.ensemble$link, 2, mean)
+mu.ci <- apply( h.ensemble$link, 2, PI)
+height.ci <- apply( h.ensemble$sim, 2, PI)
+```
+
+```{r, echo=F}
+# plot
+plot(height ~ age, d1 , col="slateblue", xlim=c(-2,3))
+lines(age.seq, mu.mean)
+shade(mu.ci, age.seq)
+shade(height.ci, age.seq)
+```
+
+**(6H4)**
+
+Calculate the out of sample deviance of each model. It is really clunky, so I don't show the code here:
+
+```{r, echo=F}
+k <- coef(m1) 
+mu <- k['a'] + k['b1']*d2$age
+dev.m1 <- (-2)*sum( dnorm( d2$height , mu , k['sigma'] , log=TRUE ) )
+
+k <- coef(m2)
+mu <- k['a'] + k['b1']*d2$age + k['b2']*d2$age^2
+dev.m2 <- (-2)*sum( dnorm( d2$height , mu , k['sigma'] , log=TRUE ) )
+
+k <- coef(m3)
+mu <- k['a'] + k['b1']*d2$age + k['b2']*d2$age^2 + k['b3']*d2$age^3
+dev.m3 <- (-2)*sum( dnorm( d2$height , mu , k['sigma'] , log=TRUE ) )
+
+k <- coef(m4)
+mu <- k['a'] + k['b1']*d2$age + k['b2']*d2$age^2 + k['b3']*d2$age^3 +
+k['b4']*d2$age^4
+dev.m4 <- (-2)*sum( dnorm( d2$height , mu , k['sigma'] , log=TRUE ) )
+
+k <- coef(m5)
+mu <- k['a'] + k['b1']*d2$age + k['b2']*d2$age^2 + k['b3']*d2$age^3 +
+k['b4']*d2$age^4 + k['b5']*d2$age^5
+dev.m5 <- (-2)*sum( dnorm( d2$height , mu , k['sigma'] , log=TRUE ) )
+
+k <- coef(m6)
+mu <- k['a'] + k['b1']*d2$age + k['b2']*d2$age^2 + k['b3']*d2$age^3 +
+k['b4']*d2$age^4 + k['b5']*d2$age^5 + k['b6']*d2$age^6
+dev.m6 <- (-2)*sum( dnorm( d2$height , mu , k['sigma'] , log=TRUE ) )
+```
+
+```{r}
+compare.tab <- compare(m1,m2,m3,m4,m5,m6,sort=FALSE) 
+tab <- data.frame(
+  WAIC=compare.tab@output$WAIC,
+  dev_out=c(dev.m1,dev.m2,dev.m3,dev.m4,dev.m5,dev.m6)
+)
+
+rownames(tab) <- rownames(compare.tab@output)
+tab[order(tab$dev_out), ]
+```
+
+
+
+
+
+
+
+

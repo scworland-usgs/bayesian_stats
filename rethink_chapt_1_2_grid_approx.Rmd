@@ -1,0 +1,599 @@
+---
+title: "SR chapters 1-2: Grid approximation"
+author: "scworland@usgs.gov"
+date: "2017"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+## SR Chapter 1: Intro to models
+
+* The continuous version of discrete logic is Bayesian inference
+* Bayesian inference: (1) nominate all the things that could happen according to our assumptions (prior), (2) look at what did happen (model), and (3) see which "path" from our nominations is the most consistent with what happened (data)
+* logic is garbage in garbage out
+* Multiple process models will be valid under one statistical model
+* Experimenter's Regress: basically scientists are set to confirm their hypothesis. More information in Collins, H. M.,  Pinch, T. 1988. "The golem: What you should know about science"
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=200pt]{figures/fig1.png}
+\caption{Experimenter's regress}
+\end{figure}
+
+* Strict falsification is not possible
+    + hypotheses are not models
+    + measurement is consensual, not logical
+    + falsifiability is about demarcation
+ 
+* small world ---> models, large world ---> real world
+
+## SR Chapter 2: more intro to models
+
++ Prior to fitting a model to the data, it is important to build a data story. It is fine to abandon this data story in the future, but it aids in model building
++ Every model pays for its lunch with its assumptions. For a Bayesian, it's the prior, for a frequentists, its the estimator.
++ Failure to conclude that a model is false is a failure of our imagination
+
+### Motivating example
+
++ Toss a globe up in the air and catch it. Record whether your right index finger is over water or land, and record the observation. It might be something like W L W W W L W L W for 9 tosses.
+
+### Likelihood
+
++ mathematical formula that specifies the plausibility (ie. the "likelihood") of the data.
++ map the hypothesis (eg. proportion of water on the globe is 0.6) onto the realtive number of ways the data could occur given the hypothesis.
++ the likelihood needs to tell you the probability of any possible observation for any possible state of the system being modeled
++ easier to smuggle in assumptions into the likelihood then the prior (maybe more dangerous then the prior?)
+
+**Nominate the possible events**
+
++ land (L) and water (W) and the only two possible states of the model
+
+**Collect data and calculate likelihood**
+
++ toss the globe nine time (N=9), and say how likely that exact sample is out of the "universe" of possible 9 toss samples
+
+**Make some assumptions and choose likelihood**
+
+1. each toss of the globe is independent of the prior toss
+2. the probability of W is the same on every toss (we are not yet saying what that probability is, but just that it doesn't change)
+
+probability theory provides a unique answer, the *binomial distribution:*
+
+$$
+P(w|n,p) = \frac{n!}{w!(n-w)!}p^w(1-p)^{n-w}
+$$
+
+If we assume that p = 0.5, we can plug in our 6 Ws from our 9 tosses and calculate a liklihood:
+
+```{r}
+dbinom(6, size=9, prob=0.5)
+```
+
+In plain english, that is "based on our assumptions about p, the probability of getting 6 Ws from our of 9 tosses is around 0.164". Let's change p to 0.4 and 0.6 to see how that changes the probabilities *of the data*:
+
+```{r}
+c(dbinom(6, size=9, prob=0.4), dbinom(6, size=9, prob=0.6))
+```
+
+As we expected, decreasing p made the likelihood of 6 Ws much lower, and increasing p made it higher. Sometimes likelihoods are written as $\mathcal{L}(p|w,n)$. This is just a way to say "what is the likelihood of p, given the number of Ws, based on the number of tosses".
+
+Both bayesian and frequentist methods primarily depend about assumptions made in the likelihood functions and their relations to the parameters
+
+**Parameters**
+
++ parameters are anything we want to estimate from the data. For the binomial distribution above and the globe tossing example, the parameter to estimate is $p$. We believe we have observed $W$ and $N$ without error, and are only left with $p$ as an unknown.
+
++ Our model can tell us what the data say about any parameter, and sometimes that it is just that not much can be learned. It can be useful to know that the data we have collected doesn't discriminate among the possibilities.
+
++ In Bayesian analysis, the difference between parameters and datum is fuzzy. A datum can be recast as a narrow probability density for a parameter, and parameter as a datum with uncertainty.
+
+**Parameters and priors**
+
++ For every parameter we want to estimate in a baysian model we need a prior. We need to assign an initial plausibility for every possible value of the parameter.
+
++ A flat prior (noninformative) is a common choice, but *regularizing* priors (weakly informative) normally improve inference. In non-bayesian anaylsis, the idea of regularzing priors are used in "penalized likelihood" methods.
+
+**Posterior**
+
++ after you collected data and chosen a likelihood, which parameters to estimate, and a prior for each parameter, you can estimate the posterior distribution, ie. the relative plausibility of the different parameters values conditional on the data
++ The posterior is calculated using Bayes theorem. Below is a very terse derivation of how we get from the likelihood, the prior, and the data to a posterior.
+
+Start with joint probabilities ($N$ is ommitted for simplicity):
+
+$$
+p(w,p) = p(w|p)p(p)
+$$
+ 
+That is, the probability of getting a W on the toss *and* p being equal to some value is equal to the probability of getting a water given the value of p multiplied by the probability that p is that value. This can be equivalently written:
+
+$$
+p(w,p) = p(p|w)p(w)
+$$
+
+which just says that the probability of getting a W on the toss *and* p being equal to some value is equal to the probability that p is some value given that we got a W on the toss multiplied by the probability of getting a W in the toss. We can set the RHS equal to each other and solve for $p(p|w)$, the posterior that we are after:
+
+$$
+p(p|w) = \frac{p(w|p)p(p)}{p(w)}
+$$
+
+where the denominator can also be written:
+
+$$
+p(w) = E[p(w|p)] = \int{p(w|p)p(p)dp}
+$$
+
+in english,
+
+$$
+posterior = \frac{likelihood~\times~prior}{average~likelihood}
+$$
+
+The model is just conditioning the prior on some data. However, the most interesting problems in science rarely can be conditioned formally. Some models, like simple linear regression, can be conditioned analytically only if we choose priors that are easy to do mathematics with.
+
+### Grid approximation
+
++ Most parameters can take on an infinite number of values (eg. p from the binomial distribution above).
++ For simple models we can approximate the continuous values by using a finite grid
++ Does not scale well when there are large numbers of parameters because of the need to model every combination of the parameters. ie. Two parameters approximated with 100 grid points is all already $100^2=10,000$ values to compute.
+
+Grid approximation for the globe tossing example is shown below.
+
+1. define the grid by choosing a finite number of possible parameter values. We know out parameter p has to be between zero and one. Let's start by choosing twenty.
+
+```{r}
+# define grid
+p_grid <- seq(from=0, to=1, length.out=20)
+```
+
+2. $p(p)$: Define the prior at each possible value of the parameter above. We will start with a uniform prior where each possible value of the prior is equally probable:
+
+```{r}
+# 2. define prior
+prior <- rep(1, 20)
+```
+
+3. $p(w|p)$: Use the binomial distribution to calculate the likelihood of the data at each possible value of the parameter from the grid above:
+
+```{r}
+# 3. compute likelihood at each value in grid
+likelihood <- dbinom(6, size=9, prob=p_grid)
+```
+
+```{r, echo=F,fig.height=3, fig.width=5, fig.align='center'}
+# plot likelihood for each parameter
+ggplot() + geom_bar(aes(p_grid,likelihood),stat="identity", width=0.01) +
+  theme_bw() + labs(x="probability of water")
+```
+
+The likelihood alone tells us alot. For one, it is very unlikely that p is less than 0.2 or greater than 0.9. It also shows that any value between 0.65 and 0.75 are basically equally probable. 
+
+4. $p(w|p)p(p)$:The next step is to calculate the unstandardized posterior. Because we used a uniform prior, this is just equal to the likelihood.
+
+```{r}
+# 4. compute product of likelihood and prior
+unstd.posterior <- likelihood * prior
+```
+
+5. $p(w|p)p(p) / \sum{p(w|p)p(p)}$: Finally, we standardize the likelihood $\times$ prior by the sum of all possible values to restrict probabilities between 0 and 1:
+```{r}
+# 5. standardize the posterior, so it sums to 1
+posterior <- unstd.posterior / sum(unstd.posterior)
+```
+
+The plot looks almost the same at just the likelihood (becuase of our flat prior), but now all of the probabilities sum to 1:
+
+```{r, echo=F}
+# plot likelihood for each parameter
+ggplot() + geom_bar(aes(p_grid,posterior),stat="identity", width=0.01) +
+  theme_bw() + labs(x="probability of water", y = "posterior")
+```
+
+Let's look at what happens when we change the number of grid points to 100:
+
+```{r, eval=F}
+# define grid
+p_grid <- seq(from=0, to=1, length.out=100)
+```
+
+```{r, echo=F}
+# define grid
+p_grid <- seq(from=0, to=1, length.out=100)
+
+# define prior
+prior <- rep(1, 100)
+
+# compute likelihood at each value in grid
+likelihood <- dbinom(6, size=9, prob=p_grid)
+
+# compute product of likelihood and prior
+unstd.posterior <- likelihood * prior
+
+# standardize the posterior, so it sums to 1
+posterior <- unstd.posterior / sum(unstd.posterior)
+
+# plot
+ggplot() + 
+  geom_bar(aes(p_grid,posterior),stat="identity", width=0.005) +
+  #geom_line(aes(p_grid,posterior),color="red", size=1) +
+  theme_bw() + labs(x="probability of water", y = "posterior")
+```
+
+Let's also look at a couple of other priors. First let's say we know the probability of water is greater than 0.5. We can assign every p value less than 0.5 a prior probability of 0:
+
+```{r, eval=F}
+# define prior
+prior <- ifelse(p_grid <0.5, 0, 1)
+```
+
+```{r, echo=F}
+# laplace prior
+prior <- ifelse(p_grid <0.5, 0, 1)
+
+# plot
+ggplot() + geom_bar(aes(p_grid, prior),stat="identity", width=0.005) + 
+  #geom_line(aes(p_grid, prior), color="red", size=1) + 
+  theme_bw() +
+  xlab("possible proportion of water") + ggtitle("Truncated uniform prior")
+```
+
+```{r, echo=F}
+# define grid
+p_grid <- seq(from=0, to=1, length.out=100)
+
+# define prior
+prior <- ifelse(p_grid <0.5, 0, 1)
+
+# compute likelihood at each value in grid
+likelihood <- dbinom(6, size=9, prob=p_grid)
+
+# compute product of likelihood and prior
+unstd.posterior <- likelihood * prior
+
+# standardize the posterior, so it sums to 1
+posterior <- unstd.posterior / sum(unstd.posterior)
+
+# plot
+ggplot() + 
+  geom_bar(aes(p_grid,posterior),stat="identity", width=0.005) +
+  #geom_line(aes(p_grid,posterior),color="red", size=1) +
+  theme_bw() + labs(x="probability of water", y = "posterior")
+```
+
+Another prior could be something like a Laplace prior where most of the probaility is centered around zero:
+
+```{r, eval=F}
+# define grid
+prior <- exp(-5*abs(p_grid-0.5))
+```
+
+```{r, echo=F}
+# laplace prior
+prior <- exp(-5*abs(p_grid-0.5))
+
+# plot
+ggplot() + geom_bar(aes(p_grid, prior),stat="identity", width=0.005) + 
+  #geom_line(aes(p_grid, prior), color="red", size=1) + 
+  theme_bw() + 
+  xlab("possible proportion of water") + ggtitle("Laplace prior")
+```
+
+```{r, echo=F}
+# define grid
+p_grid <- seq(from=0, to=1, length.out=100)
+
+# define prior
+prior <- exp(-5*abs(p_grid-0.5))
+
+# compute likelihood at each value in grid
+likelihood <- dbinom(6, size=9, prob=p_grid)
+
+# compute product of likelihood and prior
+unstd.posterior <- likelihood * prior
+
+# standardize the posterior, so it sums to 1
+posterior <- unstd.posterior / sum(unstd.posterior)
+
+# plot
+ggplot() + 
+  geom_bar(aes(p_grid,posterior),stat="identity", width=0.005) +
+  #geom_line(aes(p_grid,posterior),color="red", size=1) +
+  theme_bw() + labs(x="probability of water", y = "posterior")
+```
+
+### Quadratic approximation
+
++ the region near the peak of the posterior distribution is usually Gaussian
++ the Gaussian distribution is convienent because it can be completely described by its mean and variance
++ the log of the Gaussian distribution is a parabola which is described by a quadratic function
++ The quadratic approximation is useful for any log-posterior distribution that is a parabola
++ a parabola is simple to use because it has no derivatives beyond the second, so if we know the center of a parabola and its second derivative, we know everything about it.
+
+
+
+```{r, echo=F, fig.height=3, fig.width=7,fig.align='center'}
+x = 1:100
+y = dnorm(1:100, mean = 50, sd = 15, log = FALSE)
+y2 = dnorm(1:100, mean = 50, sd = 15, log = TRUE)
+
+p1 = ggplot() + geom_line(aes(x,y), size=1) + theme_bw() 
+p1 = p1 + ggtitle(expression(N(mu==50, ~ sigma==15)))
+
+p2 = ggplot() + geom_line(aes(x,y2), size=1) + theme_bw() 
+p2 = p2 + ggtitle(expression(ln(N(mu==50, ~ sigma==15))))
+p2 = p2 + ylab("y")
+
+grid.arrange(p1,p2, ncol=2)
+```
+
+the second derivative of a parabola is proportional to its inverse squared standard deviation (ie. "precision" = $\tau$)
+
+$$
+ln(N(\mu,\sigma))'' \propto \frac{1}{\sigma^2}
+$$
+
+```{r}
+# inverse of squared standard deviation (15)
+1/(15^2)
+
+# approximate second derivative
+abs(diff(diff(y2)))[1]
+```
+The approximation is done in two steps:
+
+1. First, find the posterior mode by using a gradient climbing algorithm. This is done by tracking the slope and moving along the line until the peak is reached (second derivative = 0). 
+
+2. Use the second derivative (curvature) near the peak, to compute a quadratic approximation of the entire posterior
+
+The `rethinking` package has a function named `map` (Maximum A Posteriori) to calculate the mode and curvature near the peak of the posterior distribution:
+
+```{r}
+# pass binomial likelihood, uniform prior, and the data to map
+globe.qa <- map(alist(w ~ dbinom(9,p), p ~ dunif(0,1)), data=list(w=6))
+
+# display summary of quadratic approximation using precision function
+precis(globe.qa)
+```
+
+The results can be read as *assuming the posterior is Gaussian, its maximum is 0.67 and its standard deviation is 0.16*.
+
+
+### Homework
+
+**(2M3)**
+
++ earth 0.7 W, mars 1.0 L
++ one toss and result is land
++ what is probability that earth was the globe tossed given that the result was land?
+
+$$
+p(E|L) = \frac{p(L|E)p(E)}{p(L)}
+$$
+
+$$
+p(E|L) = \frac{0.3 \times 0.5}{(0.3 \times 0.5) + (1 \times 0.5)} = 0.23
+$$
+
+
+**(2M4)**
+
+counting: BB = 2, BW = 1, WW = 0... the probability that the card is BB is 2/3
+
+Bayes:
+
+
+$$
+p(B|BB) = \frac{p(BB|B)p(BB)}{p(B)} = \frac{1 \times (1/3)}{1/2} = 2/3
+$$
+
+**(2M5)**
+
+BB = 4, BW = 1, WW = 0: the probability that the card is BB is 4/5
+
+Bayes rule could be used similarly as above just with new probabilities
+
+**(2M6)**
+
+BB = 2 $\times$ 1, BW = 1 $\times$ 2, WW = 0 $\times$ 3: the probability that the card is BB is 2/4
+
+**(2M7)**
+
+This one was a little more complicated: 
+
++ Start with BB, BW, and WW
++ Draw B then W
++ what is the probability that the first card was BB
++ what is $p(BB|B,W)$, or, "what is the probability that the first card has two black sides, given the number of ways to produce a black side, conditional on a draw of a white card."
++ One option is just to count the relative number of ways that the data (1 B then 1 W) could occur and count the number of ways that includes BB. Remember to double count the BB and WW cards. Each side of the BB and WW cards are designated with numbers below:
+
+$$
+\begin{aligned}
+& (1) ~ \overset{1}{B} \overset{2}{B} + WB \\
+& (2) ~ \overset{2}{B} \overset{1}{B} + WB \\
+& (3) ~ \overset{1}{B} \overset{2}{B} + \overset{1}{W} \overset{2}{W} \\
+& (4) ~ \overset{2}{B} \overset{1}{B} + \overset{1}{W} \overset{2}{W} \\
+& (5) ~ \overset{1}{B} \overset{2}{B} + \overset{2}{W} \overset{1}{W} \\
+& (6) ~ \overset{2}{B} \overset{1}{B} + \overset{2}{W} \overset{1}{W} \\
+& (7) ~ BW + \overset{1}{W} \overset{2}{W} \\
+& (8) ~ BW + \overset{2}{W} \overset{1}{W} 
+\end{aligned}
+$$
+
++ six out of the 8 ways include the BB card, so $p(BB|B,W) = 3/4$.
++ We can also use Bayes theorem:
+
+$$
+p(BB|B,W) = \frac{p(W|B,BB)p(B|BB)p(BB)}{P(B,W)}
+$$
+
+where,
+
+$$
+P(B,W) = p(W|B,BB)p(B|BB)p(BB) + p(W|B,BW)p(B|BW)p(BW)
+$$
+
+plug in the numbers,
+
+$$
+p(BB|B,W) = \frac{3/4 \times 1 \times 1/3}{(3/4 \times 1 \times 1/3) + (1/2 \times 1/2 \times 1/3)} = 3/4
+$$
+
+
+**(2H1)**
+
++ two species of panda (A, and B). Species A has twins 10% of the time, and specied B has twins 20%
+
+$$
+\begin{aligned}
+& p(A) = 0.5 \\
+& p(B) = 0.5 \\
+& p(t|A) = 0.1 \\
+& p(t|B) = 0.2 
+\end{aligned}
+$$
+
+```{r}
+pA = 0.5
+pB = 0.5
+pt_A = 0.1
+pt_B = 0.2
+```
+
++ Several probabilities we can calculate for later:
+
+$$
+\begin{aligned}
+& p(t) = p(t|A) \times p(A) + p(t|B) \times p(B)\\
+\\
+& p(A|t) = \frac{p(t|A)p(A)}{p(t)} \\
+\\
+& p(B|t) = \frac{p(t|B)p(B)}{p(t)} 
+\end{aligned}
+$$
+
+```{r}
+pt = (pt_A * pA) + (pt_B * pB)
+pA_t = (pt_A * pA) / pt
+pB_t = (pt_B * pB) / pt
+
+# print values
+c(pt,pA_t,pB_t)
+```
+
++ If we have an unkown species that has twins, what is the probability that the next birth will also be twins? 
++ We know the probability of twins is 0.15. This is $p(t)$ if we have *no other information* regarding the species. However, the fact that the first birth was twins should push the probability slightly towards species B (because they are more likely to have twins).
++ How can we update the probability of having twins to include this new information? 
++ The relative probabilities of the panda being species A or B has changed from 0.5 in light of the new information. All we have to do is insert the new probabilities, $p(A|t)$ for $p(A)$ and $p(B|t)$ for $p(B)$, into our calculation of the probability of twins.
+
+$$
+p(t)_{new} = p(A|t) \times p(t|A) + p(B|t) \times p(t|B)
+$$
+
+```{r}
+ptt = (pA_t * pt_A) + (pB_t * pt_B)
+
+# print value
+ptt
+```
+
+Just like we expected, the probability increased slightly from 0.15 to 0.166 based on the information that the first birth was twins.
+
+**(2H2)**
+
+```{r}
+# same as original
+pA_t = (pt_A * pA) / pt
+
+# print
+pA_t
+```
+
+
+**(2H3)**
+
++ If first birth was twins, and second birth was not a twin, what is the probability that the panda is from species A.
++ This is similar to 2H1 where we need to use the new probabilities of species A or B after a twin is born to update probabilities. "s" refers to a single (not twins) and is equal to 1-t
+
+$$
+p(A|s,t) = \frac{p(s|A)p(A|t)}{p(s,t)}
+$$
+
+where,
+
+$$
+p(s,t) = p(s|A)p(A|t) + p(s|B)p(B|t)
+$$
+
+```{r}
+ps_A = 1 - pt_A
+ps_B = 1 - pt_B
+pA_s.t = (ps_A * pA_t)/(ps_A * pA_t + ps_B * pB_t)
+
+# print values
+pA_s.t
+```
+
+This also makes sense. If the probability that it was species A after birthing twins was 0.333, we would expect that probability to increase slightly if the next birth was not twins.
+
+
+**(2H4)**
+
++ There is a test that can now identify the species with a certian level of accuracy. The probability that it correctly identifies species A is 0.8 and the probability that it correctly identifies species B is 0.65.
++ Another way to think about it is, given that it is species A, the test will be correct 80% of the time, and given that it is species B, the test will be correct 65% of the time.
+
+$$
+\begin{aligned}
+p(test=A|A) & = 0.8 \\
+p(test=B|A) & = 0.2 \\
+p(test=B|B) & = 0.65 \\
+p(test=A|B) & = 0.35
+\end{aligned}
+$$
+
++ if the test returns positive for species A, what is the probability that it is species A, $p(A|test=A)$? 
+
+$$
+p(A|test=A) = \frac{p(test=A|A)p(A)}{p(test=A)}
+$$ 
+
+where
+
+$$
+p(test=A) = p(test=A|A)p(A) + p(test=A|B)p(B)
+$$
+
+```{r}
+#omit variable names here for cleaness
+(0.8 * 0.5)/(0.8 * 0.5 + 0.35 * 0.5)
+```
+
+
++ How can we use our prior information about the births and the test information to update the probability that the panda is species A.
++ Said another way, what is $p(A|test=A, twins, single)$? Let's write the whole thing out:
+
+$$
+p(A|test=A, twins, single) = \frac{p(test=A|A) \times p(twins|A) \times p(single|A) \times p(A)}{p(test=A, single, twins)}
+$$
+
++ The denominator is asking, "what is the probability of getting the test=A, and twins being born on the first birth, and a single panda being born on the second?" 
+
+$$
+p(test=A|A) \times p(twins|A) \times p(single|A) \times p(A) + p(test=A|B) \times p(twins|B) \times p(single|B) \times p(B)
+$$
+
++ We already have most of the information we need from 2H3 and can simplify the above using the updated priors from 2H3
+
+```{r}
+#omit variable names here for cleaness
+(0.8 * 0.36)/(0.8 * 0.36 + 0.35 * 0.64)
+```
+
++ This last value can be interpreted as, "Given a panda that had twins, then a single offspring, then returned positive for test=A, there is a 56% chance that the panda is from species A." Notice how the posterior probabilities updated with each new piece of information.

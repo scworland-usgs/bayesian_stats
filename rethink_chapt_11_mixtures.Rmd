@@ -1,0 +1,591 @@
+---
+title: "SR chapter 11: Mixture models"
+author: "scworland@usgs.gov"
+date: "2017"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: yes
+    toc_depth: 4
+header-includes: 
+  - \usepackage{tikz}
+  - \usepackage{pgfplots}
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable,purrr)
+
+#install_github("rmcelreath/rethinking",ref="Experimental")
+```
+
+## Ordered categorical outcomes
+
+Sometimes the order of a categorical variable is important. For example, in surveys when respondents are asked to rank something on a 1-10 scale. The outcome is sort of continuous (values 1-10) but is always positive. A Gaussian model would work ok for estimating the mean and standard deviation but would produce negative predictions. This is where an ordered categorical model, with a cumulative link function, can be used. The example data is the result of surveys from multiple trolley experiments (moral intuition). Pages 332-333 have more details about these experiments. 
+
+```{r}
+data(Trolley)
+d <- Trolley
+str(d)
+```
+
+The "response" column provides the rank a person gave to a certain action. We want to use the cumulative probability of each response:
+
+```{r}
+cum_p_k <- cumsum(table(d$response)/nrow(d))
+```
+
+To redescribe the histogram as log-cumulative-odds, we need a series of intercepts $\alpha_k$ for each response: 
+
+$$
+\alpha_k = log \frac{P(y_i < k)}{1-P(y_i < k)}
+$$
+```{r}
+log_cum_p_k <- log(cum_p_k/(1-cum_p_k))
+```
+ 
+```{r, echo=F, fig.width=7}
+p1 <- ggplot(d) + 
+  geom_bar(aes(response), width=0.2) +
+  scale_x_continuous(breaks=1:7,labels = as.character(1:7)) +
+  theme_classic()
+
+p2 <- ggplot() + 
+  geom_point(aes(x=1:7,y=cum_p_k),shape=21) + 
+  geom_line(aes(x=1:7,y=cum_p_k)) +
+  scale_x_continuous(breaks=1:7,labels = as.character(1:7)) +
+  labs(x="response") +
+  theme_classic()
+
+p3 <- ggplot() + 
+  geom_point(aes(x=1:6,y=log_cum_p_k[1:6]),shape=21) + 
+  geom_line(aes(x=1:6,y=log_cum_p_k[1:6])) +
+  scale_x_continuous(breaks=1:7,labels = as.character(1:7)) +
+  coord_cartesian(xlim=c(1,7)) +
+  labs(x="response",y="log_cum_p_k") +
+  theme_classic()
+
+grid.arrange(p1,p2,p3,nrow=1)
+```
+
+Notice that the logit of the largest reponse is $\infty$, and this will always be the case because the cumulative probability will always be 1 for the largest value and $logit(1/(1-1)) = \infty$. We want to estimate the posterior distribution for these intercepts so we can account for sample size and prior information. To do this we need the likelihood for the discrete probability of each possible response variable. All we have to do is use the inverse logit to translate log-cumulative-odds back to cumulative probability and use subtraction:
+
+$$
+P_k = P(y_i=k) = P(y_i \leq k) - P(y_i \leq k-1)
+$$
+
+Which just regains the raw probabilities of each response:
+
+```{r}
+# subtract cumulative probabilities
+round(c(cum_p_k[1], cum_p_k[2:7] - cum_p_k[1:6]),2)
+
+# same as raw probabilities
+round(table(d$response)/nrow(d),2)
+```
+
+The model is simple to implement in stan, the only catch being that we have to add start values for the alphas:
+
+```{r, cache=T, results='hide'}
+m11.1 <- map2stan(
+  alist(
+    response ~ dordlogit(phi,alpha),
+    phi <- 0,
+    alpha ~ dnorm(0,10)
+  ),
+  data=list(response = d$response),
+  start=list(alpha=seq(-2,2,length.out = 7))
+)
+```
+
+```{r}
+precis(m11.1, depth=2)
+logistic(coef(m11.1))
+```
+
+We have just regained the cumulative probabilities as before but now we have a full posterior distribution which accounts for sample size. Also, note that we don't actually need to estimate the intercept when the response is equal to 7, as we know its going to return a large log-cumulative-odds value which will be equal to a probability of 1. If we add predictors the model looks like:
+
+$$
+log \frac{P(y_i < k)}{1-P(y_i < k)} = \alpha_k - \phi_i
+$$
+where $\phi_i$ is the linear model. Subtracting the linear model ensures that as the value of a predicitor increases, the probability mass moves to higher values. This may not seem intuitive at first but it's due to the log-cumulative-odds. We can now include predictor variables ot the trolley model. We will add dummy variables for action, intention, and contact. 
+
+```{r, cache=T, results='hide'}
+d2 <- select(d, response, action, intention, contact)
+
+m11.2 <- map2stan(
+  alist(
+    response ~ dordlogit(phi,alpha),
+    phi <- ba*action + bi*intention + bc*contact,
+    alpha ~ dnorm(0,10),
+    c(ba,bi,bc) ~ dnorm(0,10)
+  ),
+  data=d2,
+  start=list(alpha=seq(-2,2,length.out = 7))
+)
+```
+
+```{r}
+precis(m11.2, depth=2)
+```
+
+It is nearly impossible to interpret these coefficients in the log-cumulative-odds scale. The best way to understand what the model is saying is to plot it. I tried to plot this for a while and could not figure out a way to so I just used the code from the book. 
+
+```{r, echo=F, eval=F}
+post <- extract.samples(m11.2)
+
+d.pred <- expand.grid(contact=c(0,1),
+                      intention=c(0,1),
+                      action=c(0,1))
+
+
+phi <- mean(post$ba)*d.pred$action + mean(post$bi)*d.pred$intention + mean(post$bc)*d.pred$contact
+
+diag(pordlogit(1:7,a=alphas,phi=phi[2:8]))
+
+
+d.plot <- d2 %>%
+  mutate(contact=ifelse(contact==1,"contact","no contact"),
+         intention=ifelse(intention==1,"intention", "no intention"),
+         action=ifelse(action==1,"action", "no action")) %>%
+  group_by(contact,intention,action) %>%
+  summarize(mu.response = mean(response))
+
+ggplot(d.plot) + 
+  geom_point(aes(intention,mu.response,color=action)) + 
+  geom_line(aes(intention,mu.response,color=action,group=action)) + 
+  facet_wrap(~contact) + 
+  coord_cartesian(ylim=c(1,7)) +
+  scale_y_continuous(breaks=1:7,labels = as.character(1:7)) +
+  theme_bw()
+```
+
+```{r}
+post <- data.frame(extract.samples(m11.2))
+
+plot( 1 , 1 , type="n" , xlab="intention" , ylab="probability" ,
+    xlim=c(0,1) , ylim=c(0,1) , xaxp=c(0,1,1) , yaxp=c(0,1,2) )
+
+## R code 11.19
+kA <- 0     # value for action
+kC <- 1     # value for contact
+kI <- 0:1   # values of intention to calculate over
+for ( s in 1:100 ) {
+    p <- post[s,]
+    ak <- as.numeric(p[1:7])
+    phi <- p$ba*kA + p$bi*kI + p$bc*kC 
+    pk <- pordlogit( 1:7 , a=ak , phi=phi )
+    for ( i in 1:7 )
+        lines( kI , pk[,i] , col=col.alpha(rangi2,0.1) )
+}
+mtext( concat( "action=",kA,", contact=",kC ) )
+```
+
+The width of the line (actually multiple lines) represents the uncertainty in the posterior distribution. There is very little uncertainty in these models because there is so much data. We could make similar plots for values of the other predictors as well. I am not sure how to get these probabilities back to predicted scores. This section is still unclear to me.
+
+## Zero-inflated outcomes 
+
+Zero inflated outcomes arise when more than one stochastic process can produce a zero in count data. This is an exmaple of a *mixture* and it requires two likelihoods to model the same response.
+
+Suppose a team goes out and counts the number of *Brook Silverside* fish in a stream and record the number of counts per hour. Some hours will have zero counts. Let's also assume that they take random 1 hour breaks throughout the day. This would obviously lead to a zero during the hour that they took the break. If all we have is count per hour, can we model the percentage of hours they took a break? The zero counts could arise (1) because the team didn't see any fish in an hour, (2) or they took a break and didn't count any fish for an hour. Let $p$ be the probability that the team took a break and $\lambda$ be the mean number of counts when the team actually counted. Think of the team taking a break as resulting from a coin flip (if it wasn't random, like they always took a break at 12:00, you would just drop that hour from the dataset). We don't know the probability of either side, but depending on the outcome of the coin flip, the team either takes a break or counts fish. When the team is counting fish, they count a poisson number of fish with average number $\lambda$. The probability of observing a zero is:
+
+$$
+\begin{aligned}
+P(0|p,\lambda) &= P(break|p) + [P(count|p) * P(0|\lambda)]\\
+&= p + [(1-p)*exp(-\lambda)]
+\end{aligned}
+$$
+
+The $exp(-\lambda)$ comes from the likelihood for the Poisson: $P(y|\lambda) = \lambda^y exp(-\lambda)/y!$. In plain words, the above equation is just saying: *The probability of observing zero counts is the probability that the team took a break, or (+) the probability that the team counted and ($\times$) failed to count any fish*. The likelihood of any non-zero count $y$ is,
+
+$$
+\begin{aligned}
+P(y|p,\lambda) &= P(break|p)(0) + [P(count|p) * P(y|\lambda)]\\
+&= (1-p) \frac{\lambda^yexp(-\lambda)}{y!}
+\end{aligned}
+$$
+\    
+Below is the picture format of the likelihood mixtures:
+\   
+\   
+\  
+
+\begin{center}
+\begin{tikzpicture}[every path/.style={>=latex}]
+  \node[draw, circle]           (a) at (0,0)  { };
+  \node[draw, circle, label=left:break]  (b) at (-2,-2)  { };
+  \node[draw, circle, label=right:count] (c) at (2,-2)   { };
+  \node          (d) at (2,-4)  {y > 0};
+  \node          (e) at (-2,-4)  {y = 0};
+  \draw[->] (a) edge node[draw=none,fill=none,midway,left,xshift=-0.5cm] {p} (b);
+  \draw[->] (a) edge node[draw=none,fill=none,midway,right,xshift=0.5cm] {1-p} (c);
+  \draw[->] (c) edge node[draw=none,fill=none,midway,right,xshift=0.2cm] {$\frac{\lambda^ye^{-\lambda}}{y!}$} (d);
+  \draw[->] (c) edge node[draw=none,fill=none,midway,below,xshift=0.2cm] {$e^{-\lambda}$} (e);
+  \draw[->] (b) edge (e);
+  \end{tikzpicture}
+\end{center}
+
+\ 
+\ 
+
+The model definition looks like:
+
+$$
+\begin{aligned}
+y &\sim ZIPoisson(p_i, \lambda_i) \\
+logit(p_i) &= \alpha_p + \beta_px_i \\
+log(\lambda_i) &= \alpha_\lambda + \beta_\lambda x_i
+\end{aligned}
+$$
+Where there are two link functions (logit and log) and two linear models. The parameters of the linear models will be different because the effect of a predictor will vary with each part of the mixture. You can also use different predictors for each part of the model. Below I simulate the fish counting data and try to recapture the parameters using a zero-inflated-Poisson model.
+
+\ 
+\ 
+
+```{r}
+# define parameters
+break_prob <- 0.25 # 25% of hours
+rate_count <- 1.5 # number of fish/hour
+
+# sample 2 months of 8 hour days
+N <- 60*8
+
+# simulate hours that team took a break
+break_hours <- rbinom(N,1,break_prob)
+
+# simulate number of fish counted
+y <- (1-break_hours)*rpois(N,rate_count)
+```
+
+Now $y$ is a zero inflated response variable of the number of fish counted per hour. 
+\ 
+\ 
+\ 
+
+```{r, echo=F}
+zeros_break <- sum(break_hours)
+zeros_count <- sum(break_hours==0 & y==0)
+zeros_total <- sum(y==0)
+
+ggplot() + geom_histogram(aes(y)) + 
+  geom_col(aes(x=0,y=zeros_total),fill="dodgerblue",width=0.21) +
+  geom_col(aes(x=0,y=zeros_count),width=0.21) +
+  theme_bw() +
+  ggtitle("Zero inflated Poisson response data",
+          subtitle="The blue line segment represents zero counts due to breaks")
+```
+\ 
+
+Now we can fit the model,
+
+```{r, cache=T, results='hide'}
+m11.3 <- map2stan(
+  alist(
+    y ~ dzipois(p, lambda),
+    logit(p) <- ap,
+    log(lambda) <- al,
+    ap ~ dnorm(0,1),
+    al ~ dnorm(0,15)
+  ), 
+  data=list(y=y)
+)
+```
+
+```{r}
+precis(m11.3)
+```
+
+Then take the inverse logit of $ap$ and exp of $al$ to check parameters.
+
+```{r, echo=F}
+post <- data.frame(extract.samples(m11.3))
+
+d.plot <- data.frame(parameters = c("ap","al"),
+                     mu = c(mean(logistic(post$ap)),mean(exp(post$al))),
+                     low = c(PI(logistic(post$ap))[1],PI(exp(post$al))[1]),
+                     high = c(PI(logistic(post$ap))[2],PI(exp(post$al))[2]),
+                     actual = c(break_prob,rate_count))
+
+
+ggplot(d.plot) + 
+  geom_pointrange(aes(x=parameters,y=mu,ymin=low,ymax=high),alpha=0.8) +
+  geom_point(aes(x=parameters,y=actual), fill="dodgerblue", shape=22,size=2) +
+  coord_flip() +
+  theme_bw() +
+  ggtitle("Parameter estimates for zero inflated Poisson model",
+          subtitle="The blue squares are the actual values and pointranges are 89% PI")
+```
+
+## Over-dispersed outcomes
+
+The variance (sometimes referred to as *dispersion*) of counting processes is function of the same parameters as the expected values. For example, the variance of the Binomial distribution is defined as $np(10p)$. If after we condition on all the predictor variables the observed variance is still greater than this amount, then this implies that some ommitted variable is producing additional dispersion in the observed counts. If we ignore the over-dispersion we will suffer the same consequences of ignoring any predictor variables (spurious inferences or masked effects). There are several ways to deal with overdispersion and the remainder of this chapter deals with *continuous mixture* models and the next chapter handles the same issues using *multilevel models*.
+
+### Beta-binomial
+
+A beta-binomial model assumes that each binomial count observation has its own probability of success, and the model estimates the distribution of probabilities of success across cases where the predictor variables change the shape of the distribution. For example, if we ignore department in the college admission data the admission column is overdispersed.
+
+```{r}
+data(UCBadmit)
+d <- UCBadmit
+print(d,row.names=F)
+```
+
+A beta-binomial model assumes that each count on each row has its own unique probability of success and these probabilities are drawn from a common beta distribution. A beta distribution is is a distribution of values between 0-1 and is described by two parameters: (1) a mean value $\bar{p}$ and (2) a shape parameter $\theta$.
+
+```{r}
+x <- seq(0.1,1,0.01)
+pbar <- c(0.1,0.3,0.5,0.7)
+theta <- c(1,3,5,7,9,11)
+
+# scw custom function
+dbeta3 <- function(x,prob,theta,log=FALSE) {
+  data.frame(x=x,value=dbeta2(x,prob,theta))
+}
+
+beta.grid <- expand.grid(prob=pbar,theta=theta)
+beta.all <- plyr::mdply(beta.grid, dbeta3, x)
+```
+
+```{r,echo=F,fig.width=6,fig.height=4.5}
+ggplot(beta.all) + 
+  geom_line(aes(x,value,color=factor(prob))) + 
+  facet_wrap(~factor(theta)) +
+  labs(color=expression(bar(p))) +
+  ggtitle("Beta distribution for different parameters",
+          subtitle=expression(paste("Facets are for different values of ", theta))) +
+  theme_bw()
+```
+
+The intercept only beta-binomial model for the admission data would look like:
+
+$$
+\begin{aligned}
+A_i &\sim BetaBinomial(n_i,\bar{p_i},\theta) \\
+logit(\bar{p_i}) &= \alpha \\
+\alpha &\sim Normal(0,10) \\
+\theta &\sim Exponential(1)
+\end{aligned}
+$$
+Where predictors could be added in the linear model.
+\ 
+
+```{r, results='hide', cache=T}
+m11.4 <- map2stan(
+  alist(
+    admit ~ dbetabinom(applications,pbar,theta),
+    logit(pbar) <- a,
+    a ~ dnorm(0,2),
+    theta ~ dexp(1)
+  ),
+  data=d,
+  constraints=list(theta="lower=0"),
+  start=list(theta=3),
+  iter=4000,warmup=1000,chains=2,cores=2)
+```
+\ 
+\ 
+
+```{r}
+post <- data.frame(extract.samples(m11.4)) %>%
+  mutate(prob=logistic(a)) %>%
+  select(-a)
+
+ggplot(post) + 
+  geom_histogram(aes(prob),color="white") +
+  geom_vline(xintercept=mean(post$a), 
+             color="red", 
+             linetype="dashed") +
+  labs(x=expression(alpha)) +
+  theme_bw()
+```
+
+We need to account for the correlation between $\bar{p}$ and $\theta$,
+
+```{r}
+x <- seq(0,1,0.01)
+post.sample <- sample_n(post,100)
+beta.all <- plyr::mdply(post.sample, dbeta3, x)
+beta.mean <- dbeta3(x,mean(post$prob),mean(post$theta))
+```
+
+```{r,echo=F}
+ggplot() + 
+  geom_line(data=beta.all,aes(x,value,group=prob), alpha=0.2) + 
+  geom_line(data=beta.mean,aes(x=x,y=value), size=1.5) +
+  labs(x="probability of admit") +
+  ggtitle("Joint distribution of probability of admission") +
+  coord_cartesian(ylim=c(0,3)) +
+  theme_bw()
+```
+
+
+## Negative-binomial or gamma-poisson
+
+Similar to the beta-binomial, the gamma-poisson model assumes that each count observation has its own rate. The model estimates the shape of a gamma distriubtion to describe Poisson rates. 
+
+```{r}
+x <- seq(0,20,0.5)
+mu <- c(1,3,5,7,9)
+theta <- c(0.1,0.25,0.5,1,1.5,2)
+
+# scw custom function
+dgamma3 <- function(x,mu,scale,log=FALSE) {
+  data.frame(x=x,value=dgamma2(x,mu,scale))
+}
+
+gamma.grid <- expand.grid(mu=mu,scale=theta)
+gamma.all <- plyr::mdply(gamma.grid, dgamma3, x)
+```
+
+```{r,echo=F,fig.width=6,fig.height=4.5}
+ggplot(gamma.all) + 
+  geom_line(aes(x,value,color=factor(mu),group=mu)) + 
+  facet_wrap(~factor(scale)) +
+  labs(color=expression(mu)) +
+  ggtitle("Gamma distribution for different parameters",
+          subtitle=expression(paste("Facets are for different values of ", theta))) +
+  theme_bw()
+```
+
+**The book has a note about not using WAIC with either the beta-binomial or gamma-poisson unless you really know what you are doing.** I didn't dig into too much, but it's worth revisting in the future.
+
+## Homework
+
+**(11M1)**
+
+Employees are ranked from 1 to 4 on their productivity and received the following ranks:
+
+```{r}
+d <- data.frame(rate = 1:4,
+                n = c(12,36,7,41))
+
+# cumulative log odds
+cum_p_k <-cumsum(d$n/sum(d$n))
+log_cum_p_k <-log(cum_p_k/(1-cum_p_k))
+```
+
+**(11M3)**
+
+Modify the zero-inflated Poisson distribution to construct a zero-inflated Binomial. Recall the Binomial distribution:
+
+$$
+P(y|n,q) = \frac{n!}{y!(n-y)!}q^y(1-q)^{n-y}
+$$
+if we set $p$ the be the single probability of whether or not there is a zero, $q$ as the probability for the binomial distribution, and $n$ as the number of trials, the probability of estimating a zero is:
+
+$$
+P(0|p,q,n) = p + (1-p)(1-q)^{n}
+$$
+
+In plain words, the above equation is just saying: *The probability of observing a zero is the probability of a zero from the first process, or (+) the probability of a value > 1 for the first process and ($\times$) the probability of value > 1 from the Binomial*. The likelihood of any non-zero count $y$ is,
+
+$$
+P(y|p,q,n)) = (1-p) \frac{n!}{y!(n-y)!}q^y(1-q)^{n-y}
+$$
+
+\   
+\  
+
+\begin{center}
+\begin{tikzpicture}[every path/.style={>=latex}]
+  \node[draw, circle]           (a) at (0,0)  { };
+  \node[draw, circle, label=left:zero]  (b) at (-2,-2)  { };
+  \node[draw, circle, label=right:not-zero] (c) at (2,-2)   { };
+  \node          (d) at (2,-4)  {y > 0};
+  \node          (e) at (-2,-4)  {y = 0};
+  \draw[->] (a) edge node[draw=none,fill=none,midway,left,xshift=-0.5cm] {p} (b);
+  \draw[->] (a) edge node[draw=none,fill=none,midway,right,xshift=0.5cm] {1-p} (c);
+  \draw[->] (c) edge node[draw=none,fill=none,midway,right,xshift=0.2cm] {$\frac{n!}{y!(n-y)!}q^y(1-q)^{n-y}$} (d);
+  \draw[->] (c) edge node[draw=none,fill=none,midway,below,xshift=0.5cm] {$(1-q)^{n}$} (e);
+  \draw[->] (b) edge (e);
+  \end{tikzpicture}
+\end{center}
+
+\ 
+\ 
+
+**(11H1)**
+
+Use the data from the Hurricanes paper. 
+
+```{r}
+data(Hurricanes)
+d <- Hurricanes
+str(d)
+```
+
+Build two simple Poisson models of deaths and compare retrodictive accuracy. First, an intercept only model:
+
+$$
+\begin{aligned}
+d_i &\sim Poisson(\lambda_i) \\
+log(\lambda_i) &= \alpha \\
+\alpha &\sim N(0,10)
+\end{aligned}
+$$
+```{r, results='hide', cache=T}
+m11H1.1 <- map2stan(
+  alist(
+    deaths ~ dpois(lambda),
+    log(lambda) <- a,
+    a ~ dnorm(0,10)
+  ), 
+  data=d)
+```
+
+$$
+\begin{aligned}
+d_i &\sim Poisson(\lambda_i) \\
+log(\lambda_i) &= \alpha + \beta_f femininity \\
+\alpha &\sim N(0,10) \\
+\beta_f &\sim N(0,10)
+\end{aligned}
+$$
+
+```{r, results='hide', cache=T}
+m11H1.2 <- map2stan(
+  alist(
+    deaths ~ dpois(lambda),
+    log(lambda) <- a + bf*femininity,
+    a ~ dnorm(0,10),
+    bf ~ dnorm(0,10)
+  ), 
+  data=d)
+```
+
+Compare the two models,
+
+```{r}
+compare(m11H1.1,m11H1.2)
+```
+
+Plot the predictions for each storm and model:
+
+```{r, results='hide'}
+# extract posterior samples
+post <- data.frame(extract.samples(m11H1.2)) %>%
+  mutate(a = exp(a),
+         bf = exp(bf)) 
+
+post.params <- function(x,a,bf){data.frame(x=x,pred=a + bf*x)}
+pred.lines <- plyr::mdply(sample_n(post,50), post.params, d$femininity)
+```
+
+```{r, echo=F}
+ggplot(d) + 
+  geom_point(aes(femininity,deaths)) +
+  geom_text(data=filter(d,deaths>100),aes(femininity,deaths,label=name)) +
+  geom_line(data=pred.lines,aes(x,pred,group=a),alpha=0.1) +
+  theme_bw() +
+  ggtitle("Posterior predictions of intercept and slope model",
+          subtitle="lines are the results of 25 random draws of parameters from posterior")
+```
+
+
+**I did not complete the homeworks for this chapter and should come back and finish it in the future. I really needed to move on to MLMs for my research**.
+
+
+
+
+

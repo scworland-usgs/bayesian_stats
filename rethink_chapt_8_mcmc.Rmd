@@ -1,0 +1,425 @@
+---
+title: "SR chapter 8: MCMC"
+author: "scworland@usgs.gov"
+date: "Feb 11 2017"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+This chapter provides a short overview of MCMC methods. I only include basic pieces of code and very limited text. A great background to Hamiltonian Monte Carlo methods can be found in Michael Betancourt's paper, ["A Conceptual Introduction to Hamiltonian Monte Carlo".](https://arxiv.org/pdf/1701.02434.pdf)
+
+## Metropolis algorithm
+
+Below is a simple example of the the "king Markov" and the island kingdom example. It is the most basic form of a MCMC algorithm and programs like JAGS and BUGS were build using variations of the Metropolis algorithm (such as Gibbs sampling). The code comments should help explain each step.
+
+```{r}
+# number of steps
+num_weeks <- 1e5
+
+# preallocate vector for "islands"
+positions <- rep(0,num_weeks)
+
+# starting island
+current <- 10
+
+for (i in 1:num_weeks) {
+    # record current position
+    positions[i] <- current
+
+    # flip coin to generate proposal
+    proposal <- current + sample(c(-1,1) , size=1)
+    
+    # now make sure he loops around the archipelago
+    if (proposal < 1) proposal <- 10
+    if (proposal > 10) proposal <- 1
+
+    # move?
+    prob_move <- proposal/current
+    current <- ifelse(runif(1) < prob_move, proposal, current)
+}
+```
+
+```{r, echo=F, fig.width=7}
+p1 <- ggplot() + theme_bw() +
+  geom_line(aes(1:500,positions[1:500]), size=0.3) +
+  labs(x="weeks", y="island", title="500 steps of metropolis algorithm") +
+  scale_y_continuous(breaks=1:10) 
+
+p2 <- ggplot() + theme_bw() +
+  geom_histogram(aes(positions)) +
+  ggtitle("Histogram of metropolis algorithm") +
+  scale_x_continuous(breaks=1:10) 
+
+grid.arrange(p1,p2,nrow=1)
+```
+
+The king ends up visiting each island in proportion to their population if their population is in proportion to their their index number (1:10).
+
+## Hamiltonian Monte Carlo in Stan
+
+Stan implements a version of Hamiltonian monte carlo so sample from the high dimensional parameter distribution. Below is a basic example of using `map2stan` along with some of the helper functions.
+
+```{r, results='hide'}
+# load the ruggedness data set
+data(rugged)
+
+d <- rugged %>% 
+  dplyr::select(gdp = rgdppc_2000, rugged, Af = cont_africa) %>% 
+  mutate(gdp = log(gdp)) %>%
+  na.omit()
+
+# map2stan
+m8.1 <- map2stan(
+  alist(
+    gdp ~ dnorm(mu, sigma),
+    mu <- a + gamma*rugged + bA*Af,
+    gamma <- bR + bAR*Af,
+    a ~ dnorm(8,100),
+    c(bA,bR,bAR) ~ dnorm(0,1),
+    sigma ~ dcauchy(0,10)
+  ),
+  data=d,
+  iter=2000,
+  warmup=1000,
+  chains=1)
+```
+
+After the stan code has been compiled, we can easily resample from it in parallel. It will not make much difference in this example. The below code runs four independent chains, 
+
+```{r, results='hide'}
+m8.1_4chains <- map2stan(m8.1, chains=4, cores=4)
+```
+
+Extract the posterior samples into a list,
+
+```{r}
+# posterior samples in list
+post <- extract.samples(m8.1_4chains)
+
+# coerce to data frame
+post <- data.frame(post) 
+head(post)
+```
+
+Summary of posterior,
+
+```{r}
+precis(m8.1_4chains)
+precis(post)
+```
+
+plot the warmup and chains,
+
+```{r,fig.width=7}
+plot(m8.1_4chains) 
+```
+
+pairs plot of samples,
+
+```{r, fig.height=5}
+pairs(m8.1_4chains)
+```
+
+\newpage
+
+## Stan model code
+
+Show stan code:
+
+```{r}
+stancode(m8.1)
+```
+
+## Bad chains
+
+Chains may not converge if there are broad flat regions of the posterior and we are using flat priors. Below is an example:
+
+```{r, results='hide'}
+y <- c(-1,1)
+
+m8.2 <- map2stan(
+  alist(
+    y ~ dnorm(mu,sigma),
+    mu <- alpha
+  ), 
+  data=list(y=y), 
+  start=list(alpha=0,sigma=1), 
+  chains=2, 
+  iter=4000, 
+  warmup=1000)
+```
+
+```{r}
+precis(m8.2)
+```
+
+```{r,fig.width=7}
+plot(m8.2)
+```
+
+This can be fixed with either (1) weakly informative priors or (2) more data = stronger liklihood.
+
+```{r,results='hide'}
+m8.3 <- map2stan(
+  alist(
+    y ~ dnorm(mu,sigma),
+    mu <- alpha,
+    alpha ~ dnorm(1,10),
+    sigma ~ dcauchy(0,1)
+  ), 
+  data=list(y=y), 
+  start=list(alpha=0,sigma=1), 
+  chains=2, 
+  iter=4000, 
+  warmup=1000)
+```
+
+```{r}
+precis(m8.3)
+```
+
+```{r,fig.width=7}
+plot(m8.3)
+```
+
+## Non-identifiable parameters
+
+Highly correlated predictors can create non-identifiable parameters. Simulate data to fit the following model:
+
+$$
+\begin{aligned}
+y_i &\sim N(\mu_i,\sigma) \\
+\mu_i &= \alpha_1 + \alpha_2 \\
+\sigma &\sim HalfCauchy(0,1)
+\end{aligned}
+$$
+
+```{r,results='hide'}
+# simulate response
+y <- rnorm(100, mean=0, sd=1)
+
+# build model
+m8.4 <- map2stan(
+  alist(
+    y ~ dnorm(mu,sigma),
+    mu <- a1 + a2,
+    sigma ~ dcauchy(0,1)
+  ), 
+  data=list(y=y), 
+  start=list(a1=0, a2=0, sigma=1), 
+  chains=2, 
+  iter=4000, 
+  warmup=1000)
+```
+
+```{r}
+precis(m8.4)
+```
+
+```{r,fig.width=7}
+plot(m8.4)
+```
+
+We cannot estimate each parameter independently, only their sums. Weak priors can help again:
+
+```{r,results='hide'}
+# build model
+m8.5 <- map2stan(
+  alist(
+    y ~ dnorm(mu,sigma),
+    mu <- a1 + a2,
+    a1 ~ dnorm(0,10),
+    a2 ~ dnorm(0,10),
+    sigma ~ dcauchy(0,1)
+  ), 
+  data=list(y=y), 
+  start=list(a1=0, a2=0, sigma=1), 
+  chains=2, 
+  iter=4000, 
+  warmup=1000)
+```
+
+```{r}
+precis(m8.5)
+```
+
+```{r, fig.width=7}
+plot(m8.5)
+```
+
+## Homework
+
+**(8H1)**
+ We can simply sample from the priors if we omit a likelihood,
+ 
+```{r, results='hide'}
+m8h1 <-  map2stan(
+  alist(
+    a ~ dnorm(0,1),
+    b ~ dcauchy(0,1)
+  ),
+  data=list(y=1),
+  start=list(a=0, b=0),
+  iter=1e4, warmup=100, WAIC=F)
+```
+
+```{r, fig.width=7}
+plot(m8h1)
+```
+
+\newpage  
+
+**(8H6)**
+
+Program a metropolis algorithm for the globe tossing example ealier in the book. The raw data is (W L W W W L W L W), that is, 6 waters in 9 tosses. And the likelihood:
+
+$$
+\begin{aligned}
+w_i &\sim Binomial(n,p) \\
+p &= Uniform(0,1)
+\end{aligned}
+$$
+The code below implements the metropolis algorith MCMC approximation. The best way to understand each piece is to just step through it and see what each line does.
+
+```{r}
+# number of steps
+num_samples <- 1e4
+
+# preallocate parameter vector
+p_samples <- rep(NA,num_samples)
+
+# initialize chain with p=0.5
+p <- 0.5 
+
+for (i in 1:num_samples) {
+  # record current parameter value
+  p_samples[i] <- p
+  
+  # generate a uniform proposal from -0.1 to +0.1
+  proposal <- p + runif(1,-0.1,0.1)
+  
+  # now reflect off boundaries at 0 and 1
+  # this is needed so proposals are symmetric
+  if (proposal < 0) proposal <- abs(proposal)
+  if (proposal > 1) proposal <- 1-(proposal-1)
+  
+  # compute posterior prob of current and proposal
+  prob_current <- dbinom(6,size=9,prob=p) * dunif(p,0,1)
+  prob_proposal <- dbinom(6,size=9,prob=proposal) * dunif(proposal,0,1)
+  
+  # move?
+  prob_move <- prob_proposal/prob_current
+  p <- ifelse(runif(1) < prob_move, proposal, p)
+}
+```
+
+```{r,echo=F, fig.width=7}
+p1 <- ggplot() + 
+  geom_line(aes(1:num_samples, p_samples), size=0.3) + 
+  theme_bw() +
+  labs(x="sample number", "parameter sample")
+
+p2 <- ggplot() +
+  geom_density(aes(p_samples), fill="black", alpha=0.5) +
+  theme_bw() +
+  labs(x="parameter")
+
+grid.arrange(p1,p2,nrow=1)
+```
+
+\newpage
+
+**(8H6) continued**
+
+What if we had multiple parameters? We can simulate a simple linear regression and estimate the *known* parameters using MCMC. We just generate independent proposals for each parameter while holding the other parameter at it's current value.
+
+```{r}
+# 100 observations with mean 5 and sd 3
+y <- rnorm(100, 5, 3)
+
+# number of samples
+num_samples <- 1e4
+
+# preallocate vectors
+mu_samples <- rep(NA,num_samples)
+sigma_samples <- rep(NA,num_samples)
+
+# starting values
+mu <- 0
+sigma <- 1
+
+# MCMC
+for (i in 1:num_samples) {
+  # record current parameter values
+  mu_samples[i] <- mu
+  sigma_samples[i] <- sigma
+  
+  # proposal for mu
+  mu_prop <- mu + runif(1,-0.1,0.1)
+  
+  # compute posterior prob of mu and mu_prop
+  # this is done treating sigma like a constant
+  # will do calculations on log scale, as we should
+  # so log priors get added to log likelihood
+  log_prob_current <- sum(dnorm(y,mu,sigma,TRUE)) +
+    dnorm(mu,0,10,TRUE) + dunif(sigma,0,10,TRUE)
+  
+  log_prob_proposal <- sum(dnorm(y,mu_prop,sigma,TRUE)) +
+    dnorm(mu_prop,0,10,TRUE) + dunif(sigma,0,10,TRUE)
+  
+  # move?
+  prob_move <- exp(log_prob_proposal - log_prob_current)
+  mu <- ifelse(runif(1) < prob_move, mu_prop, mu)
+  
+  # proposal for sigma
+  sigma_prop <- sigma + runif(1,-0.1,0.1)
+  
+  # reflect off boundary at zero
+  if ( sigma_prop < 0 ) sigma_prop <- abs(sigma_prop)
+  
+  # compute posterior probabilities
+  log_prob_current <- sum(dnorm(y,mu,sigma,TRUE)) +
+    dnorm(mu,0,10,TRUE) + dunif(sigma,0,10,TRUE)
+  log_prob_proposal <- sum(dnorm(y,mu,sigma_prop,TRUE)) +
+    dnorm(mu,0,10,TRUE) + dunif(sigma_prop,0,10,TRUE)
+  
+  # move?
+  prob_move <- exp(log_prob_proposal - log_prob_current)
+  sigma <- ifelse(runif(1) < prob_move , sigma_prop , sigma)
+}
+```
+
+```{r, echo=F}
+ggplot() + 
+  geom_line(aes(mu_samples, sigma_samples), size=0.2, alpha=0.7) + 
+  geom_density2d(aes(mu_samples, sigma_samples)) +
+  theme_bw() +
+  geom_vline(xintercept=5, color="red", linetype="dashed") +
+  geom_hline(yintercept=3, color="red", linetype="dashed") +
+  labs(x=expression(mu), y=expression(sigma)) +
+  ggtitle("Metropolis algorithm approximation",
+          subtitle="Red dashed lines are true parameter values")
+```
+
+I only used 10,000 steps for this example, but it basically converges on the correct parameters around 1,000,000 steps (too much to plot).
+
+
+
+
+
+
+
+
+
+
+
+

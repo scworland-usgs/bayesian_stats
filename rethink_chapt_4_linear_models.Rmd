@@ -1,0 +1,951 @@
+---
+title: "SR chapter 4: Linear models"
+author: "scworland@usgs.gov"
+date: "2017"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+This chapter begins with some cool stuff about the Gaussian distribution and why it arises so much in nature (central limit theorem). I am skipping over a lot of that material here, but below are some interesting take-aways.
+
++ If a outcome is normally distributed, we still cannot say anything about the data generating process. Gaussian distributions arise from adding small fluctuations from some mean (large fluctuations are guassian if we take the log transform), which resutls in a distribution that has "shed all information about the underlying process, aside from the mean and spread".
++ We can often build a statistical model of a process way before we can build a physical process model.
++ The Gaussian distribution is the most natural expression of the state of our ignorance because the Gaussian distribution is the shape that can be realized in the largest number of ways without introducing new assumptions (based off information theory and maximum entropy).
+
+### Language for describing models
+
+1. define response variable (i.e., $y$)
+2. define likelihood for response variable (always gaussian for linear regression)
+3. define predictor variables
+4. relate parameters of likelihood to predictor variables
+5. choose priors for every parameter
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \beta \times x_i \\
+\beta &\sim Normal(0,10) \\
+\sigma &\sim HalfCauchy(0,1)
+\end{aligned}
+$$
+
+These models define the ways values of some variables can arise, given values of other variables. Or said another way, we are mapping one set of variables through a probability distribution onto another set of variables.
+
+**Application to the globe tossing example**
+
+Define our globe tossing model:
+
+$$
+\begin{aligned}
+w &\sim Binomial(n,p) \\
+p &\sim Uniform(0,1) 
+\end{aligned}
+$$
+
+In english, "the number of ws is distributed binomially (or drawn from a binomial distriubtion), with sample size n and probability $p$. The prior for $p$ is assumed to be uniform between zero and one." The ~ indicates that the relationship between the LHS and the RHS is stochastic. Let's define this using Bayes theorem, and then support it with R code and grid approximation.
+
+$$
+p(p|w,n) = \frac{Binomial(w|n,p)Uniform(p|0,1)}{\int Binomial(w|n,p)Uniform(p|0,1) dp}
+$$
+
+```{r}
+# data
+w <- 6
+n <- 9
+
+# possible p values
+p_grid <- seq(from=0,to=1,length.out=1000)
+
+# likelihood
+likelihood <- dbinom(w,n,p_grid)
+
+# prior
+prior <- dunif(p_grid,0,1)
+
+# posterior
+posterior <- likelihood*prior/sum(likelihood*prior)
+
+ggplot() + 
+  geom_line(aes(p_grid,posterior),stat="identity") +
+  theme_bw() + labs(x="probability of water", y = "posterior")
+```
+
+
+### Building a linear model
+
+Start with data from the rethinking package:
+
+```{r}
+data(Howell1)
+d <- Howell1
+str(d)
+```
+
+print 1st 10 rows of data frame: 
+
+```{r,echo=F, results='asis'}
+d.tab <- xtable(d,digits=c(0,2,2,2,0))
+align(d.tab) <- c("c","c","c","c","c")
+print(d.tab[1:10,],include.rownames=F,comment = F)
+```
+
+Ultimately we are going to build a model to predict height. So let's start by tidying up our data to do so. Age and and height are very correlated before adulthood, so let's remove anyone who is under the age of 18.
+
+```{r}
+d2 <- filter(d, age >= 18)
+```
+
+Plot a histogram of the heights:
+
+```{r, echo=F}
+ggplot(d2) + geom_histogram(aes(height), bins=20,color="white") + theme_bw()
+```
+
+Let's define our model for heights, ignoring predictors for a moment,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &\sim Normal(190.5,40)\\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+The prior for the mean of the heights distribution is 190.5 cm because that is how tall I am (why not), and the standard deviation of 20 cm basically allows for a large number of heights to serve as the mean value for the heights distribution. Let's plot our prior,
+
+```{r, echo=F}
+ggplot(data.frame(x = c(80, 300)), aes(x)) +
+  stat_function(fun = dnorm, args = list(mean = 190.5, sd = 40)) +
+  theme_bw() + labs(x=expression(mu), y="density")
+```
+
+The standard deviation prior is a bit more boring, but basically we are saying the standard deviation could be anything greater than zero but less than 50,
+
+```{r, echo=F}
+ggplot(data.frame(x = c(-10, 60)), aes(x)) +
+  stat_function(fun = dunif, args = list(min =0, max = 50)) +
+  theme_bw() + labs(x=expression(sigma), y="density")
+```
+
+We have enough information to look at the prior for the heights themselves. This can be thought of as the plausible range of heights before the model has seen any data.
+
+```{r}
+sample_mu <- rnorm(1e4, 190.5, 40)
+sample_sigma <- runif(1e4, 0, 50)
+prior_h <- rnorm(1e4, sample_mu, sample_sigma)
+```
+
+```{r, echo=F}
+ggplot() + geom_histogram(aes(prior_h), bins=40,color="white") + theme_bw() + labs(x="prior distribution for heights")
+```
+
+Because we only have two parameters, we can use grid approximation one last time. Below I build one verbose for-loop which explains each step, and then follow it with a shorter `sapply` function that McElreath provided in his book.
+
+```{r, eval=F}
+# define grid of mean values for ML
+mu_grid <- seq(from=153, to=157, length.out=200)
+
+# define grid of stand. dev values for ML
+sigma_grid <- seq(from=6, to=9, length.out=200)
+
+# expand grids for every combination (200x200)
+parameter_grid <- expand.grid(mu=mu_grid, sigma=sigma_grid)
+
+# Calculate prior probabilities of parameters
+mu_prior <- log(dnorm(parameter_grid$mu, 190.5, 40))
+sigma_prior <- log(dunif(parameter_grid$sigma, 0, 50))
+
+# pre-allocate log likelihood
+log.likelihood <- numeric()
+for (i in 1:nrow(parameter_grid)) {
+  
+  # select height data
+  h <- d2$height
+  
+  # select one value of mu
+  mu <- parameter_grid$mu[i]
+  
+  # select corresponding value of sigma
+  sigma <- parameter_grid$sigma[i]
+  
+  # calculate the likelihood for every height value
+  likelihood_i <- dnorm(h, mean=mu, sd=sigma)
+  
+  # take the log of the likelihoods
+  log.likelihood_i <- log(likelihood_i)
+  
+  # sum the log likelihood. This returns one
+  # (log) likelihood value for the unique 
+  # combination of parameters indexed by "i"
+  log.likelihood[i] <- sum(log.likelihood_i)
+}
+
+# build posterior data frame
+posterior <- parameter_grid %>%
+  mutate(log.likelihood = log.likelihood, 
+         # multiply priors x LL (add because log)
+         numerator = log.likelihood + mu_prior + sigma_prior,
+         # find the max of the LL
+         denominator = max(numerator),
+         # normalize to largest LL value
+         prob = exp(numerator - denominator)) 
+```
+
+Below is a much faster version of the for-loop above that uses `sapply`,
+
+```{r}
+mu_grid <- seq(from=153, to=157, length.out=200)
+sigma_grid <- seq(from=6, to=9, length.out=200)
+posterior <- expand.grid(mu=mu_grid, sigma=sigma_grid)
+
+posterior$log.likelihood <- sapply(1:nrow(posterior), function(i) sum(dnorm(
+                                  d2$height,
+                                  mean=posterior$mu[i],
+                                  sd=posterior$sigma[i],
+                                  log=TRUE)))
+
+posterior$prod <- posterior$log.likelihood + 
+  dnorm(posterior$mu, 190.5, 40, TRUE) +
+    dunif(posterior$sigma, 0, 50, TRUE)
+
+posterior$prob <- exp(posterior$prod - max(posterior$prod))
+```
+
+```{r, echo=F, results='asis'}
+start <- which.max(posterior$prob)-5
+stop <- which.max(posterior$prob)+5
+
+p.tab <- xtable(posterior[start:stop,],digits=rep(3,6))
+align(p.tab) <- rep("c",6)
+print(p.tab[1:10,],include.rownames=F,comment = F)
+```
+
+We can tell from the table that the posterior distribution is maximized when $\mu=$ `r posterior$mu[which.max(posterior$prob)]` and $\sigma=$  `r posterior$sigma[which.max(posterior$prob)]`. This is a lot of work to regain the mean (`r mean(d2$height)`) and standard deviation (`r sd(d2$height)`) of a vector! In the future we will not deal with the posterior directly, but samples from the distribution. To sample from two parameters all we have to do is randomly sample the rows of posterior in proportion the the values in `posterior$prob`.
+
+```{r}
+post.samples <- sample(1:nrow(posterior), size=1e4, replace=T, prob=posterior$prob)
+sample.mu <- posterior$mu[post.samples]
+sample.sigma <- posterior$sigma[post.samples]
+```
+
+plot the samples and add contours,
+
+```{r, echo=F,fig.width=4, fig.height=4}
+ggplot() + geom_point(aes(sample.mu, sample.sigma), alpha=0.1, color="dodgerblue") + theme_bw() +
+  geom_density_2d(aes(sample.mu, sample.sigma), color="grey30")
+```
+
+We can also look at the marginal (averaged over the other parameter) density of each parameter,
+
+```{r, echo=F, fig.width=7, fig.height=3}
+mu_dens <- with(density(sample.mu), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+sigma_dens <- with(density(sample.sigma), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+mu.p <- ggplot(data=mu_dens, aes(x,y)) + geom_line() + theme_bw() + labs(x=expression(mu~samples),y="density")
+sigma.p <- ggplot(data=sigma_dens, aes(x,y)) + geom_line() + theme_bw() + labs(x=expression(sigma~samples),y="density")
+
+grid.arrange(mu.p, sigma.p, ncol=2)
+```
+
+and calculate the HPDI for parameter,
+
+```{r}
+HPDI(sample.mu)
+HPDI(sample.sigma)
+```
+
+One last thing before moving to MAP approximation. $\mu$ is often going to be normally distributed (with a normal prior and likelihood), but this is not true for $\sigma$. This is because $\sigma$ must be positive, so there is always more uncertainty about how big it is rather than how small (hence the longer right tail). We can show this by randomly sampling a small number of heights, and resampling the posterior for $\sigma$,
+
+```{r}
+d3 <- sample(d2$height, size=20)
+```
+
+```{r, echo=F}
+mu_grid <- seq(from=150, to=170, length.out=200)
+sigma_grid <- seq(from=4, to=20, length.out=200)
+posterior <- expand.grid(mu=mu_grid, sigma=sigma_grid)
+
+posterior$log.likelihood <- sapply(1:nrow(posterior), function(i) sum(dnorm(
+                                  d3,
+                                  mean=posterior$mu[i],
+                                  sd=posterior$sigma[i],
+                                  log=TRUE)))
+
+posterior$prod <- posterior$log.likelihood + 
+  dnorm(posterior$mu, 190.5, 40, TRUE) +
+    dunif(posterior$sigma, 0, 50, TRUE)
+
+posterior$prob <- exp(posterior$prod - max(posterior$prod))
+
+post.samples <- sample(1:nrow(posterior), size=1e4, replace=T, prob=posterior$prob)
+sample.mu <- posterior$mu[post.samples]
+sample.sigma <- posterior$sigma[post.samples]
+
+dens(sample.sigma, norm.comp = T)
+```
+
+We can see it's not really Gaussian.
+
+### Using Maximum a posteriori (MAP)
+
+Rather than grid approximation, we will use the quadratic approximation to get an idea of the shape of the distribution at its peak. It is similar to grid approximation in that MAP finds the posterior probability for every combination of parameter values and then climbs the posterior distribution to the peak. Let's start by reloading the data and redefining our model.
+
+
+```{r}
+data(Howell1)
+d <- Howell1
+d2 <- filter(d, age >= 18)
+```
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &\sim Normal(190.5,40)\\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+Let's translate the model description above into a formula list (`flist`):
+
+```{r}
+flist <- alist(
+    height ~ dnorm(mu, sigma),
+    mu ~ dnorm(190.5, 40),
+    sigma ~ dunif(0, 50)
+)
+```
+
+We can now fit the model to the data frame `d2` and look at the output,
+
+```{r}
+# fit the MAP model
+m1 <- map(flist,data=d2)
+
+# summarize output
+precis(m1)
+```
+
+The output provides the Gaussian approximation for each of the parameters marginal distribution. Let's change the prior for $\mu$ to something stronger and see how it changes the output. Below I change the standard deviation of the prior for $\mu$ from 40 to 0.1.
+
+```{r}
+# fit the MAP model
+m2 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu ~ dnorm(190.5, 0.1),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+
+# summarize output
+precis(m2)
+```
+
+Notice that the posterior for $\mu$ barely moved off the prior. Also note that the posterior for $\sigma$ changed as well, even though we didn't change it's prior. That is because the posterior for $\sigma$ depends on the posterior for $\mu$. We can think of the prior as being the posterior of some other analysis. We can actually calculate how much "data" was used to construct this hypothetical posterior if the distribution is Gaussian: $\sigma_{post} = 1 / \sqrt{n}$, so we can rearrange this, $n = 1/ \sigma^2_{post}$, and plug in our standard deviation for the prior, $n=1/0.1^2=100$. So our prior is effectively telling the model that we have 100 previous data points where the height was 190.5 cm. 
+
+### sampling from MAP
+
+Just like the mean and variance is sufficient to describe a Gaussian distribution, a joint (multi-dimensional) distribution can be fully described by a list of means, variances, and covariances. Let's look at the covariance matrix for our original joint distribution.
+
+```{r}
+vcov(m1)
+```
+
+We can decompose this covariance matrix into a vector of variances (for the posterior of each parameter), and a correlation matrix that describes how changes in one parameter lead to correlated changes in other parameters.
+
+```{r}
+diag(vcov(m1))
+cov2cor(vcov(m1))
+```
+
+As we would expect, $\mu$ and $\sigma$ are not correlated. Now that we all the information we need for the joint posterior distribution, we can sample like we did earlier.
+
+```{r}
+posterior <- extract.samples(m1, n=1e4)
+```
+
+This returns a data frame with a column of $\mu$ values and $\sigma$ values. We can plot it like before:
+
+```{r, echo=F,fig.width=5, fig.height=4}
+ggplot(posterior) + geom_point(aes(mu, sigma), alpha=0.1, color="dodgerblue") + theme_bw() +
+  geom_density_2d(aes(mu, sigma), color="grey30")
+```
+
+A quick aside about estimating $\sigma$. We can improve the estimate by replacing $\sigma$ with $log(\sigma)$. This helps because the $log(\sigma)$ is often closer to normally distributed. This is how it would look in R:
+
+```{r, eval=F}
+m <- map(
+      alist(
+        height ~ dnorm(mu, exp(log_sigma)),
+        mu ~ dnorm(190.5, 0.1),
+        log_sigma ~ dnorm(2,10)
+      ),
+    data=d2)
+
+# extract sigma and exponentiate
+posterior <- extract.samples(m)
+sigma <- exp(posterior$log_sigma)
+```
+
+Notice that `exp(log_sigma)` guarantees a positive value, so we can use a normal prior distribution for `log_sigma` rather than a uniform. This won't matter much now, but will come up later.
+
+### Adding a predictor
+
+Now it is time to add a predictor. We are going to see how much height covaries with weight.
+
+```{r, echo=F}
+ggplot(d2) + geom_point(aes(weight, height), shape=21) + theme_bw()
+```
+
+
+McElreath has a nice description of linear models on page 92. I do not copy it here, but it's worth reading. The first step is to define our model. If $h_i$ equals the height of an individual, and $x_i$ equals the weight, then:
+
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta x_i \\
+\alpha &\sim Normal(190.5,100) \\
+\beta &\sim Normal(0,10) \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+The first line is the likelihood. The height of an individual is drawn from a normal distribution, where the mean of the distribution is dependent on each row (i.e., $i$), which is shown by the linear model on the second line. Notice that the linear model represents a deterministic relationship as indicated by the $=$ rather than the ~ sign. This means that once we know $\alpha$, $\beta$, and $x_i$, we know $\mu_i$. The parameters $\alpha$ and $\beta$ allow $\mu_i$ to vary systematically accross all the data. Let's think about what $\mu_i = \alpha + \beta x_i$ is really asking. We want to know what is the expected height when weight is equal to zero ($\alpha$), and what is the expected change in height when weight changes by one unit ($\beta$). Said another way, we want to model to find a line that passes through $\alpha$ when weight is zero, and has a slope $\beta$. The last thing we have to do in describing our model is assign priors to all of the other parameters. Now we modify our MAP code above to incorporate the linear model.
+
+```{r}
+# fit the MAP model
+lm1 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+```
+
+If we would rather, we can also specify the linear model directly into the normal distribution for height:
+
+```{r, eval=F}
+# fit the MAP model
+lm1 <- map(
+      alist(
+        height ~ dnorm(a + b*weight, sigma),
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+```
+
+
+We can now extract information about the posterior distribution of the parameters.
+
+```{r, echo=F, results='asis'}
+tab <- xtable(precis(lm1, corr=T)@output,digits=rep(2,8))
+align(tab) <- rep("c",8)
+print(tab,include.rownames=T,comment = F)
+```
+
+The table is pretty self explanatory. The `corr=T` argument just returns the same thing we would have gotten from `cov2cor(vcov(lm1))`. It jsut shows us that $\beta$ and $\alpha$ are almost perfectly negatively correlated. This just means that if we change the slope in the line, the intercept changes to match it (the parameters carry the same information). It is harmless at this point, but with more complicated models, it can make model fitting difficult. If we center the predictor before running the model, then we can interpret $\alpha$ to be the expected height when weight is equal to it's mean value.
+
+```{r}
+d2 <- d2 %>% mutate(weight_c=weight-mean(weight))
+
+# fit the MAP model
+lm1.c <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight_c,
+        a ~ dnorm(0,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(precis(lm1.c, corr=T)@output,digits=rep(2,8))
+align(tab) <- rep("c",8)
+print(tab,include.rownames=T,comment = F)
+```
+
+Now the intercept has more meaning (the mean of height). Below plot the (uncentered) MAP point estimates over our data:
+
+```{r, echo=F}
+ggplot(d2) + geom_point(aes(weight, height), shape=21) + theme_bw() +
+  geom_abline(intercept = coef(lm1)["a"], slope=coef(lm1)["b"], color="dodgerblue", size=1)
+```
+
+The MAP line is the least squares estimate, the same thing you would get from using `lm` in R. It represents the most plausible line in the infinite universe of possible lines. Let's include some of our uncertainty to the estimates. We can sample from the posterior distribution (because we have the means and the covariance matrix):
+
+```{r}
+posterior <- extract.samples(lm1, n=1e4)
+```
+
+Below is just the first 10 rows of the `posterior` data frame. Each row is a correlated random sample from the joint posterior distribution of all three paramerts. If we were to average all of the `a`s and `b`s, we would regain the MAP line. 
+
+```{r, echo=F, results='asis'}
+tab <- xtable(posterior[1:10,],digits=rep(2,4))
+align(tab) <- rep("c",4)
+print(tab,include.rownames=T,comment = F)
+```
+
+The implications of this is easier to grasp if we first build a model using only a subset of 10 data points.
+
+```{r}
+# randomly subset 10 samples
+d_sub <- sample_n(d2,10)
+
+# fit the MAP model
+lm1_sub <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d_sub)
+
+# extract 20 samples
+posterior_sub <- extract.samples(lm1_sub, n=20)
+```
+
+
+```{r, echo=F}
+ggplot(d_sub) + geom_abline(intercept = posterior_sub$a, slope=posterior_sub$b, color="dodgerblue", alpha=0.5) +
+  geom_point(aes(weight, height), shape=21) + theme_bw() + ggtitle("N=10")
+```
+
+There is alot of uncertainty about where exactly the line is, but it definately has a positive slope. Let's subset the data again, but this time using 100 observations.
+
+```{r, echo=F}
+# randomly subset 10 samples
+d_sub <- sample_n(d2,100)
+
+# fit the MAP model
+lm1_sub <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d_sub)
+
+# extract 20 samples
+posterior_sub <- extract.samples(lm1_sub, n=20)
+```
+
+
+```{r, echo=F}
+ggplot(d_sub) + geom_abline(intercept = posterior_sub$a, slope=posterior_sub$b, color="dodgerblue", alpha=0.5) +
+  geom_point(aes(weight, height), shape=21) + theme_bw() + ggtitle("N=100")
+```
+
+And now for the full dataset:
+
+```{r, echo=F}
+posterior <- extract.samples(lm1, n=20)
+ggplot(d2) + geom_abline(intercept = posterior$a, slope=posterior$b, color="dodgerblue", alpha=0.5) +
+  geom_point(aes(weight, height), shape=21) + theme_bw() + ggtitle("N=352")
+```
+
+If we recall that $h_i \sim Normal(\mu_i = \alpha + \beta x_i, \sigma)$, then we reframe our uncertainty as just possible values of mean values of height ($\mu_i$) for a given weight ($x_i$). For example, the distribution of possible mean values of height when weight is 50 kilograms, is computed by,
+
+```{r}
+# extract 10,000 samples from the posteriors
+posterior <- extract.samples(lm1, n=1e4)
+
+# select 50 kilograms
+xi <- 50
+
+# calculate a distribution of mu values
+mu_at_50 <- posterior$a + posterior$b * xi
+```
+
+```{r, echo=F}
+mu_at_50_dens <- with(density(mu_at_50), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+ggplot(data=mu_at_50_dens, aes(x,y)) + geom_line() + theme_bw() + labs(x=expression(mu~samples),y="density")
+```
+
+So when weight is equal to 50 kilograms, the average height is somewhere between 158 and 160 (we can get more specific using functions like `HPDI`.) Now we want to repeat the above process for every weight value. We could do this using a custom function, but for now let's use the `link` function from the `rethinking` package. The `mu` below is a matrix of where each column is a distribution 
+of 1000 mean height values for each weight value.
+
+```{r,results='hide'}
+mu <- link(lm1)
+```
+
+We actually only need the distribution of mean height values for each unique weight value. 
+
+```{r,results='hide'}
+# create sequence of weight values
+weight.seq <- round(seq(min(d2$weight)-5, max(d2$weight)+5,1),0)
+
+# calculate mu distributions for each
+mu <- link(lm1, data=data.frame(weight=weight.seq))
+
+# summarize mu
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI, prob=0.89)
+```
+
+```{r, echo=F}
+ggplot() + geom_point(aes(d2$weight, d2$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.4) +
+  labs(x="weight",y="height")
+```
+
+So far we have just shown the uncertainty in $\mu$. Although, if we again recall that $h_i \sim Normal(\mu_i = \alpha + \beta x_i, \sigma)$, we have not incorporated the uncertainty *around* $\mu$ from the likelihood. We have not incorporated $\sigma$. As we have it plotted now, the grey shaded region only shows the 89% HPDI around $\mu$. In order to capture all of the uncertainty, let's now include the fact that $h_i$ varies stochasitcally around $\mu$ as defined by $\sigma$. In order to do that, all we have to do is simulate heights from our model for each weight value.
+
+```{r,results='hide'}
+sim.height <- sim(lm1, data=list(weight=weight.seq), n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+ggplot() + geom_point(aes(d2$weight, d2$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```
+
+The dark grey shaded region is the uncertainty associated with just the parameters of the linear model, and the light grey shaded region represents the sampling uncertainty from the Gaussian likelihood (where the model expects to find 89% of the heights for a given weight). 
+
+### Polynomial regression
+
+In this section we will build a polynomial regression using the weights and heights from the full dataset (i.e., include all ages in the model).
+
+```{r, echo=F}
+data(Howell1)
+d <- Howell1
+
+ggplot(d) + geom_point(aes(weight, height), shape=21) + theme_bw()
+```
+
+We now see there is a curve(s) in the relationship between weight and height. We can model this by adding an additional parameter to our model specification,
+
+$$
+\mu_i = \alpha + \beta_1 x_i + \beta_2 x_i^2
+$$
+
+Now the mean is defined as a second order polynomial. Before building the model, we should first scale `weight`,
+
+```{r}
+# scale weight
+d$weight.s <- (d$weight-mean(d$weight))/sd(d$weight)
+
+# add second order term
+d$weight.s2 <- d$weight.s^2
+```
+
+Now we can fit, summarize, and plot the model:
+
+```{r}
+# fit the MAP model
+lm2 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b1*weight.s + b2*weight.s2,
+        a ~ dnorm(190.5,100),
+        b1 ~ dnorm(0,10),
+        b2 ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d)
+
+# extract 20 samples
+precis(lm2, corr=T)
+```
+
+```{r,results='hide'}
+# create sequence of scaled weight values
+weight.seq <- seq(min(d$weight.s)-0.1, max(d$weight.s)+0.1,0.1)
+
+# create list of data to predict
+pred_data <- list(weight.s = weight.seq, weight.s2 <- weight.seq^2)
+
+# summarize mu
+mu <- link(lm2, data=pred_data)
+mu.mean <- apply(mu,2,mean)
+mu.PI <- apply(mu,2,PI,prob=0.89)
+
+# summarize the sampling variance
+sim.height <- sim(lm2, data=pred_data, n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+ggplot() + geom_point(aes(d$weight.s, d$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```
+
+If we wanted to add a third order polynomial, we would just add that parameter to the mean.
+
+$$
+\mu_i = \alpha + \beta_1 x_i + \beta_2 x_i^2 + \beta_3 x_i^3 
+$$
+
+
+### Homework
+
+**(4M1)**
+Simulate observed y values from the prior using the model specification below.
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu,\sigma) \\
+\mu &\sim Normal(0,10) \\
+\sigma &\sim Uniform(0,10)
+\end{aligned}
+$$
+
+
+```{r}
+sample_mu <- rnorm(1e4, 0, 10)
+sample_sigma <- runif(1e4, 0, 10)
+prior_y <- rnorm(1e4, sample_mu, sample_sigma)
+```
+
+```{r, echo=F}
+ggplot() + geom_histogram(aes(prior_y), color="white") + theme_bw()
+```
+
+**(4M2)**
+
+Translate the model formula above into a MAP formula:
+
+```{r, eval=F}
+m <- map(
+      alist(
+        y ~ dnorm(mu, sigma),
+        mu ~ dnorm(0,10),
+        sigma ~ dunif(0,10)
+      ))
+```
+
+**(4M3)**
+
+Translate the MAP formula below into a mathematical model definition:
+
+```{r, eval=F}
+flist<- alist(
+  y ~ dnorm(mu, sigma),
+  mu <- a + b*x,
+  a ~ dnorm(0,50),
+  b ~ dunif(0,10)
+  sigma ~ dunif(0,50)
+)
+```
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu,\sigma) \\
+\mu &= \alpha + \beta x_i \\
+\alpha &\sim Normal(0,50) \\
+\beta &\sim Uniform(0,10) \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+**(4M3)**
+
+See the book for the question. If $h_i$ is height (in inches) for student $i$, and $x_i$ is the year where height is measured, the mathematical formula could look like,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &= \alpha + \beta x_i \\
+\alpha &\sim Normal(40,20) \\
+\beta &\sim Uniform(0,10)  \\
+\sigma &\sim Uniform(0,15)
+\end{aligned}
+$$
+
+**(4H1)**
+Predict the heights and 89% HPDI for the following weights:
+
+```{r, results='hide'}
+# new weights
+weights <- c(46.95,43.72,64.78,32.59,54.63)
+
+# load the data
+data(Howell1)
+d <- Howell1
+d2 <- filter(d, age >= 18)
+
+# fit the MAP model
+lm1 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d2)
+
+# extract samples
+posterior <- extract.samples(lm1,n=1e4)
+
+# for the first weight, this is what we want to do
+mean(rnorm(1e4,posterior$a + weights[1]*posterior$b, posterior$sigma))
+
+# use sim function and apply 
+heights <- sim(lm1, data=data.frame(weight=weights),1e4) 
+heights.mu <- apply(heights,2, mean)
+heights.HPDI <- apply(heights,2, HPDI, prob=0.89)
+
+# print
+heights.mu
+heights.HPDI
+```
+
+**(4H1)**
+Select the rows where ages are below 18:
+
+```{r}
+d3 <- filter(d, age < 18)
+```
+
+(a) Fit a linear regression using MAP. For every 10 unit increase in weight, how much taller does the child get?
+
+```{r}
+# fit the MAP model
+lm18 <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*weight,
+        a ~ dnorm(100,50),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d3)
+
+# print summary
+precis(lm18)
+```
+
+For every 10 kg a child grows 27.2 cm.
+
+(b) plot the raw data with 89% HPDI for both the mean and the predictions:
+
+```{r,results='hide'}
+# extract samples
+post.d3 <- extract.samples(lm18,n=1e4)
+
+# define a weight sequence
+weight.seq <- round(seq(min(d3$weight)-5, max(d3$weight)+5,1),0)
+
+# calculate 89% HPDI around mean
+mu <- link(lm18, data=data.frame(weight=weight.seq))
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# calculate 89% HPDI around predictions
+sim.height <- sim(lm18, data=list(weight=weight.seq), n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+# plot everything
+ggplot() + geom_point(aes(d3$weight, d3$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```
+
+**(4H3)**
+Fit the model using all of the dataset but using the natural log of weight.
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu,\sigma) \\
+\mu &= \alpha + \beta ln(x_i) \\
+\alpha &\sim Normal(40,20) \\
+\beta &\sim Normal(0,100)  \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+```{r}
+# add ln(weight) to data frame
+d$ln.weight <- log(d$weight)
+
+# fit the MAP model
+lm.ln <- map(
+      alist(
+        height ~ dnorm(mu, sigma),
+        mu <- a + b*ln.weight,
+        a ~ dnorm(190.5,100),
+        b ~ dnorm(0,10),
+        sigma ~ dunif(0, 50)
+      ),
+    data=d)
+
+# print summary
+precis(lm.ln)
+```
+
+```{r,results='hide'}
+# extract samples
+post.ln <- extract.samples(lm.ln,n=1e4)
+
+# define a weight sequence
+weight.seq <- seq(min(d$ln.weight)-0.1, max(d$ln.weight)+0.1,0.1)
+
+# calculate 89% HPDI around mean
+mu <- link(lm.ln, data=data.frame(ln.weight=weight.seq))
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# calculate 89% HPDI around predictions
+sim.height <- sim(lm.ln, data=list(ln.weight=weight.seq), n=1000)
+height.PI <- apply(sim.height, 2, PI, prob=0.89)
+```
+
+```{r, echo=F}
+# plot everything
+ggplot() + geom_point(aes(d$ln.weight, d$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="ln(weight)",y="height")
+```
+
+```{r, echo=F}
+# untransform x axis for plotting
+weight.seq <- seq(min(d$ln.weight)-0.1, max(d$ln.weight)+0.1,0.1)
+weight.seq <- exp(weight.seq)
+
+# plot everything
+ggplot() + geom_point(aes(d$weight, d$height), shape=21) + theme_bw() +
+  geom_line(aes(weight.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=weight.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=weight.seq,ymin=height.PI[1,], ymax=height.PI[2,]), alpha=0.2) +
+  labs(x="weight",y="height")
+```

@@ -1,0 +1,306 @@
+---
+title: "SR chapter 7: Interactions"
+author: "scworland@usgs.gov"
+date: "Feb 8 2017"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+Data are conditional on how the data was sampled, posterior distributions are conditional on data, and all inferences are conditional on the model. This conditioning is an important part of statistical inference. Linear models allow each observation, $y_i$, to be conditional on a set of predictors, and without interactions, we are assuming that each predictors has an independent association with the mean of an outcome. 
+
+Interactions are where the effect of one predictor depends on the value of another predictor (i.e., the effect of predictor $x_1$ varies with different levels of predictor $x_2$). This idea holds for both discrete and continuous variables. 
+
+## Interaction between continuous and discrete 
+
+The book goes through several examples using `MAP`, but these can easily be visualized using the `interplot` package. The models below are based of a dataset in the rethinking package that includes a measure of adjusted GDP, the ruggedness of the terrain, and whether or not the country is located in Africa. Does the effect (i.e., the $\beta$ coefficient) of ruggedness change with whether or not the country is in Africa or visa versa?
+
+
+```{r}
+library(interplot)
+data(rugged)
+
+d <- rugged %>% 
+  dplyr::select(gdp = rgdppc_2000, rugged, Af = cont_africa) %>% 
+  mutate(gdp = log(gdp)) %>%
+  na.omit()
+
+m <- lm(gdp ~ rugged*Af, data = d)
+
+interplot(m = m, var1 = "Af", var2 = "rugged") + 
+  theme_bw() + labs(x="ruggedness", y=expression(beta~Africa))
+```
+
+
+This plot shows the coefficient for Africa goes from being negative at low ruggedness (i.e., the gpd of countries not in Africa have a negative relationship with rugged terrain) and goes to positive for countries in Africa (i.e., the gdp of countries in Africa have a positive relationship with rugged terrain). We can look at the interaction in the other direction as well:
+
+
+```{r, echo=F}
+interplot(m = m, var1 = "rugged", var2 = "Af") + theme_bw() + labs(x="Africa", y=expression(beta~rugged))
+```
+
+
+Just as before, the coefficient of ruggedness depends on whether or not the country is in Africa. Now lets look at this using `map`. First, here is the model without interactions (and priors):
+
+
+$$
+\begin{aligned}
+y_i &\sim N(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_RR_i + \beta_AA_i
+\end{aligned}
+$$
+and with interactions:
+
+$$
+\begin{aligned}
+y_i &\sim N(\mu_i,\sigma) \\
+\mu &= \alpha + \gamma_iR_i + \beta_AA_i \\
+\gamma_i &= \beta_R + \beta_{AR}A_i
+\end{aligned}
+$$
+
+The third line, $\gamma_i = \beta_R + \beta_{AR}A_i$, is another linear equation for the slope of ruggedness which is a function of Africa. Let's fit the model:
+
+
+```{r}
+# include interactions 
+m7.1 <- map(
+  alist(
+    gdp ~ dnorm(mu, sigma),
+    mu <- a + gamma*rugged + bA*Af,
+    gamma <- bR + bAR*Af,
+    a ~ dnorm(8,100),
+    c(bA,bR,bAR) ~ dnorm(0,1),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+```
+
+
+We can compare those models to both a model without interactions and one with a dummy variable:
+
+
+```{r}
+# without Africa
+m7.2 <- map(
+  alist(
+    gdp ~ dnorm(mu, sigma),
+    mu <- a + bR*rugged,
+    a ~ dnorm(8,100),
+    bR ~ dnorm(0,1),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+# Africa as a dummy variable
+m7.3 <- map(
+  alist(
+    gdp ~ dnorm(mu, sigma),
+    mu <- a + bR*rugged + bA*Af,
+    a ~ dnorm(8,100),
+    c(bR,bA) ~ dnorm(0,1),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+```
+
+
+We can now compare these three models:
+
+
+```{r}
+compare(m7.1,m7.2,m7.3)
+```
+
+
+The model with the interactions receive most all of the weight, but more importantly, it is the only model that can account for the positive slope between ruggedness and GDP for countries in Africa:
+
+
+```{r}
+coeftab(m7.1,m7.2,m7.3)
+```
+
+
+Gamma isn't a parameter and so it wasn't a calculated value. We can easily calculate it ourselves. First at the `map` estimates within Africa:
+
+
+$$
+\gamma_1 = \beta_R + \beta_{AR} \times 1 = -0.18 + 0.35 = 0.17
+$$
+and outside of Africa:
+
+$$
+\gamma_0 = \beta_R + \beta_{AR} \times 0 = -0.18
+$$
+
+
+And reassuringly, the interplot from above that shows the same values. We can also calculate the uncertainty around $\gamma$ by sampling from the posterior.
+
+
+```{r}
+post <- extract.samples(m7.1)
+gamma1 = post$bR + post$bAR*1
+gamma0 = post$bR + post$bAR*0
+```
+
+```{r, echo=F}
+gamma <- melt(data.frame(gamma1, gamma0))
+ggplot(gamma) + geom_density(aes(value, fill=variable), alpha=0.3) + theme_bw() +
+  geom_vline(xintercept=mean(gamma1), linetype="dashed") +
+  geom_vline(xintercept=mean(gamma0), linetype="dashed") +
+  scale_fill_manual(values=c("dodgerblue","orange"),labels=c(expression(gamma[1]),expression(gamma[2])))
+```
+
+## Interaction between two continuous variables
+
+This is not a great example, because there are only 3 values per each covariate, so it's basically still discrete.
+
+The data is for the number of blooms from beds of tulips grown in greenhouses under different soil-water and light conditions. We don't think water without light would have much effect on plant growth, but we can imagine an interaction between water and sunlight, which makes this a good dataset for interactions. 
+
+
+```{r}
+# load data
+data(tulips)
+
+# center covariates
+d <- mutate(tulips, 
+            shade=shade-mean(shade), 
+            water=water-mean(water))
+m <- lm(blooms ~ water*shade, data = d)
+```
+
+
+Again, we can use map estimates, but let's first use interplot to get an idea of what to expect. 
+
+
+```{r, echo=F}
+interplot(m = m, var1 = "water", var2 = "shade") + 
+  theme_bw() + labs(x="water", y=expression(beta~shade))
+
+interplot(m = m, var1 = "shade", var2 = "water") + 
+  theme_bw() + labs(x="shade", y=expression(beta~water))
+```
+
+
+There is clearly an interaction we need to account for. We are going to fit two models: (1) only main effects, and (2) with interaction.
+
+
+$$
+\begin{aligned}
+y_i &\sim N(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_WW_i + \beta_SS_i
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+y_i &\sim N(\mu_i,\sigma) \\
+\mu &= \alpha + \gamma_iW_i + \beta_SS_i \\
+\gamma_i &= \beta_W + \beta_{WS}S_i
+\end{aligned}
+$$
+We need to change the `optim` method form BFGS to Nelder-Mead or SANN (simulated annealing) due to the large range of the response variable. We could also scale and center the response to help.
+
+
+```{r}
+# without interactions
+m7.4 <- map(
+  alist(
+    blooms ~ dnorm(mu, sigma),
+    mu <- a + bW*water + bS*shade,
+    a ~ dnorm(0,100),
+    c(bW,bS)  ~ dnorm(0,100),
+    sigma ~ dunif(0,100)
+  ),
+  data=d, 
+  method="Nelder-Mead",
+  control=list(maxit=1e4))
+
+# with interactions
+m7.5 <- map(
+  alist(
+    blooms ~ dnorm(mu, sigma),
+    mu <- a + gamma*water + bS*shade,
+    gamma <- bW + bWS*shade,
+    a ~ dnorm(0,100),
+    c(bW,bS,bWS)  ~ dnorm(0,100),
+    sigma ~ dunif(0,100)
+  ),
+  data=d,
+  method="Nelder-Mead",
+  control=list(maxit=1e4))
+
+compare(m7.4,m7.5)
+plot(coeftab(m7.4,m7.5))
+```
+
+How to interpret the coefficients:
+
+```{r}
+precis(m7.5)
+```
+
++ $\alpha$ = the expected number of blooms with both shade and water are equal to their mean
++ $\beta_W$ = increasing water by one unit results in ~60-90 more blooms when shade is held at it's mean. This does not tell you about the effect of water for any other value of shade. 
++ $\beta_S$ = increasing shade by one unit results in ~25-60 less blooms when shade is held at it's mean. This does not tell you about the effect of water for any other value of shade. 
++ $\beta_{WS}$ = the expected change of the effect of water on blooms when changing shade by one unit or visa versa.
+
+
+## Homework
+
+**(7H1)**
+
+Add dummy bed to the tulip bloom model:
+
+```{r}
+# load data
+data(tulips)
+
+# center covariates
+d <- mutate(tulips, 
+            shade=shade-mean(shade), 
+            water=water-mean(water),
+            bed=coerce_index(bed))
+
+m7.h1 <- map(
+  alist(
+    blooms ~ dnorm(mu, sigma),
+    mu <- a[bed] + gamma*water + bS*shade,
+    gamma <- bW + bWS*shade,
+    a[bed] ~ dnorm(130,100),
+    c(bW,bS,bWS)  ~ dnorm(0,100),
+    sigma ~ dunif(0,100)
+  ),
+  data=d, 
+  method="Nelder-Mead",
+  control=list(maxit=1e4))
+
+precis(m7.h1, depth=2)
+
+# compare models with and without bed
+compare(m7.5, m7.h1)
+```
+
+Dummy variables can only change the intercept for each group, but not the slope. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+

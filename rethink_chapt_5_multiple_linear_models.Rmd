@@ -1,0 +1,658 @@
+---
+title: "SR chapter 5: Multivariate linear models"
+author: "scworland@usgs.gov"
+date: "2017"
+output:
+  pdf_document:
+    toc: yes
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=5,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable)
+
+#install_github("rmcelreath/rethinking")
+```
+
+
+## SR Chapter 5: Multivariate linear models
+
+* Correlation in nature is very common
+* Multivariate linear models help us tease apart causation
+* " " help control for *confounds*, where one variable seems important because it's actually correlated with someothing of interest (spurious correlation)
+* " " help find multiple causation
+* " " help find interactions
+
+### Example with divorce rate
+
+I am not a huge fan of this data, but for fear that it will come up later in the book, I opted to use it. If I teach a class on this I will use some sort of hydrological data.
+
+```{r}
+data(WaffleDivorce)
+d <- WaffleDivorce
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(d[1:10,c(1,7,4,5)])
+print(tab,include.rownames=F,comment = F)
+```
+
+The question we want to answer with a multivariate model is *what is the predictive value of a variable, once I already know all of the other predictor variables?* For the above data, we are asking, "After I already know the marriage rate, what additional value of knowing the age at marriage?" And the reverse of that. Below is the multivariate linear model for predicting divorce rate using median age of marriage ($A$) and marriage rate ($M$):
+
+$$
+\begin{aligned}
+D_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_M M_i + \beta_A A_i \\
+\alpha &\sim Normal(10,10) \\
+\beta_M &\sim Normal(0,1)  \\
+\beta_A &\sim Normal(0,1)  \\
+\sigma &\sim Uniform(0,50)
+\end{aligned}
+$$
+
+The bulk of the model is captured by $\mu = \alpha + \beta_M M_i + \beta_A A_i$. The $+$ sign is effectively saying that *the divorce rate in a state is a function of its marriage rate or its median age at marriage.* We can also write this using more compact notation:
+
+$$
+\mu_i = \alpha + \sum_{j=1}^n \beta_j x_{ji}
+$$ 
+
+or even more compact:
+
+$$
+\mathbf{m} = \mathbf{Xb}
+$$
+
+where $\mathbf{m}$ is the predicted means, $\mathbf{b}$ is a column vector of parameters, and $\mathbf{X}$ is the design matrix.
+
+
+Fit the model in R,
+
+```{r,fig.height=3}
+# standardize the predictors
+d <- d %>%
+  mutate(mar.s = scale(Marriage),
+         age.s = scale(MedianAgeMarriage))
+
+# fit the MAP model
+m5.1 <- map(
+  alist(
+    Divorce ~ dnorm(mu, sigma),
+    mu <- a + bm*mar.s + ba*age.s,
+    a ~ dnorm(10,10),
+    bm ~ dnorm(0,1),
+    ba ~ dnorm(0,1),
+    sigma ~ dunif(0, 50)
+  ),
+  data=d)
+
+# print summary
+precis(m5.1)
+plot(precis(m5.1))
+```
+
+We can interpret these estimates as, *Once we know the median age of marriage for a state, there is little additional predictive power in also knowing the rate of marriage in that state.* The posterior distributions for multivariate models are harder to visualize than for bivariate models. Several examples are below.
+
+**Predictor residual plots**
+
+We can make a predictor the response variable for a model using the other predictors, and then use the residuals from that model as the predictor for actual response variable (e.g., divorce rate). Below is an example using marriage rate.
+
+$$
+\begin{aligned}
+M_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta A_i \\
+\alpha &\sim Normal(0,10) \\
+\beta &\sim Normal(0,1)  \\
+\sigma &\sim Uniform(0,10)
+\end{aligned}
+$$
+
+
+Fit the model in R,
+
+```{r}
+# fit the MAP model
+m5.2 <- map(
+  alist(
+    mar.s ~ dnorm(mu, sigma),
+    mu <- a + b*age.s,
+    a ~ dnorm(0,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# calcualte predictions
+mu <- coef(m5.2)['a'] + coef(m5.2)['b']*d$age.s
+
+# calculate residuals
+mar.resid <- d$mar.s - mu
+```
+
+```{r, echo=F}
+ggplot(d, aes(age.s,mar.s)) + geom_point() +
+  geom_segment(aes(xend = age.s, yend = mu), color="black") +
+  geom_abline(intercept=coef(m5.2)['a'], slope=coef(m5.2)['b']) +
+  theme_bw()
+```
+
+The residuals are the left over variation in marriage rate that isn't explained by the median age of mariage. States with positive residuals have a higher marriage rate for their age of marriage, while negative residuals indicate states that have a lower marriage rate for their age of marriage. Now we want to see if the left over variation in marriage rates can explain variance in divorce rate. Said another way, we want to see if marriage rates can predict divorce rates after we control for the median age of marriage.
+
+```{r}
+# add the residual for marriage rate
+d$mar.resid <- mar.resid
+
+# fit the MAP model
+m5.3 <- map(
+  alist(
+    Divorce ~ dnorm(mu, sigma),
+    mu <- a + b*mar.resid,
+    a ~ dnorm(10,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# extract coefficients
+precis(m5.3)
+```
+
+
+Now we can do the same thing for median age at marriage and plot both.
+
+```{r, echo=F,results='hide'}
+# define a weight sequence
+mar.resid.seq <- seq(min(d$mar.resid)-0.5, max(d$mar.resid)+0.5,0.1)
+
+# calculate 89% HPDI around mean
+mu <- link(m5.3, data=data.frame(mar.resid=mar.resid.seq),n=1000)
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# plot
+ggplot() + geom_point(aes(d$mar.resid, d$Divorce), shape=21) + theme_bw() +
+  geom_line(aes(mar.resid.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=mar.resid.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  labs(x="marriage rate residuals",y="divorce rate")
+
+# fit the MAP model
+m5.4 <- map(
+  alist(
+    age.s ~ dnorm(mu, sigma),
+    mu <- a + b*mar.s,
+    a ~ dnorm(0,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# calcualte predictions
+mu <- coef(m5.4)['a'] + coef(m5.4)['b']*d$mar.s
+
+# add the residual for median age
+d$age.resid <- d$age.s - mu
+
+# fit the MAP model
+m5.5 <- map(
+  alist(
+    Divorce ~ dnorm(mu, sigma),
+    mu <- a + b*age.resid,
+    a ~ dnorm(10,10),
+    b ~ dnorm(0,1),
+    sigma ~ dunif(0, 10)
+  ),
+  data=d)
+
+# define a weight sequence
+age.resid.seq <- seq(min(d$age.resid)-0.5, max(d$age.resid)+0.5,0.1)
+
+# calculate 89% HPDI around mean
+mu <- link(m5.5, data=data.frame(age.resid=age.resid.seq),n=1000)
+mu.mean <- apply(mu,2,mean)
+mu.HPDI <- apply(mu,2,HPDI,prob=0.89)
+
+# plot
+ggplot() + geom_point(aes(d$age.resid, d$Divorce), shape=21) + theme_bw() +
+  geom_line(aes(age.resid.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=age.resid.seq,ymin=mu.HPDI[1,], ymax=mu.HPDI[2,]), alpha=0.5) +
+  labs(x="median marriage age residuals",y="divorce rate")
+```
+
+The plots suggest that there is a lot of value in knowing median age of marriage after we know marriage rate, but knowing marriage rate after controlling for age of marriage doesn't provide much information.
+
+**Counterfactual plots**
+ 
+A counterfactual plot allows us to see how the predictions change as we change only one predictor at a time (holding the value of the other predictors constant). This is similar to a partial dependence function. We are not concerned with combination of predictors that are "realistic", but we want to understand the implication of certian predictors.
+
+```{r,results='hide'}
+# prepare counterfactual data
+a.avg <- mean(d$age.s) # ~0 because scaled
+m.seq <- seq(from=-3, to=3, length.out = 30)
+pred.data <- data.frame(mar.s=m.seq, 
+                        age.s=a.avg)
+
+# compute counterfactual mean divorce
+mu <- link(m5.1, data=pred.data)
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu,2,PI)
+
+# simulate counterfactual divorce outcomes
+m.sim <- sim(m5.1, data=pred.data, n=1e4)
+m.PI <- apply(m.sim, 2, PI)
+```
+
+```{r, echo=F}
+ggplot() + geom_line(aes(m.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=m.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=m.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
+  labs(x="scaled marriage rate",y="divorce rate") +
+  ggtitle("scaled median age at marriage = 0") + theme_bw()
+```
+
+```{r,results='hide'}
+# prepare counterfactual data
+m.avg <- mean(d$mar.s) # ~0 because scaled
+a.seq <- seq(from=-3, to=3.5, length.out = 30)
+pred.data <- data.frame(age.s=a.seq, 
+                        mar.s=m.avg)
+
+# compute counterfactual mean divorce
+mu <- link(m5.1, data=pred.data)
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu,2,PI)
+
+# simulate counterfactual divorce outcomes
+m.sim <- sim(m5.1, data=pred.data, n=1e4)
+m.PI <- apply(m.sim, 2, PI)
+```
+
+```{r, echo=F}
+ggplot() + geom_line(aes(a.seq,mu.mean), color="dodgerblue") +
+  geom_ribbon(aes(x=a.seq,ymin=mu.PI[1,], ymax=mu.PI[2,]), alpha=0.5) +
+  geom_ribbon(aes(x=a.seq,ymin=m.PI[1,], ymax=m.PI[2,]), alpha=0.2) +
+  labs(x="scaled median age at marriage rate",y="divorce rate") +
+  ggtitle("scaled marriage rate = 0") + theme_bw()
+```
+
+
+**Posterior prediction plots**
+
+These are pretty straight forward. Make predictions using original data, and plot.
+
+```{r, results='hide'}
+# make predictions
+mu <- link(m5.1)
+
+# summarize samples
+mu.mean <- apply(mu,2,mean)
+mu.PI <- apply(mu,2,PI)
+
+# simulate observations
+divorce.sim <- sim(m5.1, n=1e4)
+divorce.PI <- apply(divorce.sim,2,PI)
+
+plot.data <- data.frame(x=d$Divorce,
+                        y=mu.mean,
+                        low=mu.PI[1,],
+                        high=mu.PI[2,],
+                        state=d$Loc)
+```
+
+Plot results and label states with large residuals:
+
+```{r, echo=T}
+ggplot(plot.data, aes(x=x, y=y)) + 
+  geom_pointrange(aes(ymin=low, ymax=high), shape=21, fill="dodgerblue") +
+  geom_text(data=filter(plot.data, abs(x-y)>2.3), aes(label=state),nudge_x = -0.5) +
+  geom_abline(intercept=0,slope=1,linetype="dashed") +
+  theme_bw() + labs(x="observed divorce", y= "predicted divorce")
+```
+
+Plot ordered residuals:
+
+```{r, echo=T, fig.height=7}
+
+plot.data2 <- plot.data %>% 
+  mutate(resid=x-y,
+         resid.low=x-low,
+         resid.high=x-high,
+         state=factor(state, levels=state[order(resid)], ordered=T))
+
+ggplot(plot.data2, aes(state, resid)) + 
+  geom_pointrange(aes(ymin=resid.low, ymax=resid.high), shape=21, fill="dodgerblue") +
+  coord_flip() + theme_bw() + labs(x="", y= "residuals") +
+  geom_hline(yintercept=0,linetype="dashed") 
+```
+
+### Spurious correlations (omitted variable bias)
+
+The book has some good information about spurious correlations on pages 134-135 and is worth a read. The basic argument is that if the "real" predictor is included in the model, then multivariate regression will do a good job figuring out which on is "real", even if other variables are included that are also driven by the "real" predictor. Whereas a model can never tell you *what variable you should have included in the model* and we will be left thinking that the covariates with large absolute values of the coefficients are actually driving our response variable, when it could just be spurious correlation.
+
+### Masked relationships
+
+Masked relationships between covariates arise when two variables are correlated with the response but one has positive correlation and one has negative correlation. This can have the effect of "masking" important relationships when only looking at simple bivariate plots. For example, two indepent variables might not show much correlation with a dependent variable by themselves, but a multivariate regression will show that the effect of the variables are important after controlling for the the effect of the other variable. An example is below.
+
+```{r}
+# load dataset
+data(milk)
+d <- milk
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(d[1:10,c(1,3:8)])
+print(tab,include.rownames=F,comment = F)
+```
+
+A popular hypothesis is that primates with large brains produce more energetic milk so that brains can grow quickly. The research question is, "to what extent does the kilocalories of milk relate to the the percent of the brain mass that is the neocortex". We can first look at a simple bivariate models between milk energy and neocortex, and milk energy and log(female mass):
+
+```{r}
+# remove NA rows
+dcc <- d[complete.cases(d), ]
+
+# fit model
+m5.6 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu, sigma),
+    mu <- a + bn*neocortex.perc,
+    a ~ dnorm(0,100),
+    bn ~ dnorm(0,1),
+    sigma ~ dunif(0,1)
+  ),
+  data=dcc)
+
+precis(m5.6, digits=3)
+```
+
+```{r}
+# add log(mass) to data
+dcc$log.mass <- log(dcc$mass)
+
+# fit model
+m5.7 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu, sigma),
+    mu <- a + bm*log.mass,
+    a ~ dnorm(0,100),
+    bm ~ dnorm(0,1),
+    sigma ~ dunif(0,1)
+  ),
+  data=dcc)
+
+precis(m5.7, digits=3)
+```
+
+So neocortex percentage has a slight positive correlation with milk energy, and log(female mass) has a slight negative correlation. Now run a multivariate regression using both neocortex and log(female mass).
+
+$$
+\begin{aligned}
+k_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_n n_i + \beta_m log(m_i) \\
+\alpha &\sim Normal(0,100) \\
+\beta_M &\sim Normal(0,1)  \\
+\beta_A &\sim Normal(0,1)  \\
+\sigma &\sim Uniform(0,10)
+\end{aligned}
+$$
+
+```{r}
+# fit model
+m5.8 <- map(
+  alist(
+    kcal.per.g ~ dnorm(mu, sigma),
+    mu <- a + bn*neocortex.perc + bm*log.mass,
+    a ~ dnorm(0,100),
+    bn ~ dnorm(0,1),
+    bm ~ dnorm(0,1),
+    sigma ~ dunif(0,10)
+  ),
+  data=dcc)
+
+precis(m5.8,digits=3)
+```
+
+The coefficient of neocortex is 5x larger, and the coefficient for log(female mass) is 3x larger in the multivariate model than in the individual bivariate models. This means that when we control for mass, the effect of the neocortex is amplified, and the reverse is also true. We can also generate some data to illustrate masking:
+
+```{r}
+N <- 100
+rho <- 0.7
+xpos <- rnorm(N)
+xneg <- rnorm(N, rho*xpos, sqrt(1-rho^2))
+y <- rnorm(N, xpos-xneg)
+d <- data.frame(y,xpos,xneg)
+
+pairs(d)
+```
+
+`xpos` and `xneg` are positively correlated with each other but slightly positively correlated and negatively correlated with `y`. Below I just use `lm` but the results would be similar if we used `map`:
+
+```{r}
+coef(lm(y~xpos, d))
+coef(lm(y~xneg, d))
+coef(lm(y~xneg + xpos, d))
+```
+
+The regression model is able to "discover" that the mean of `y` is actually `xpos-xneg`, and after it controls for one covariate it is able to show that the effect is actually greater for each covariate when combined then when seperated.
+
+### Multicollinearity
+
+To demonstrate multicollinearity we will simulate a dataset to predict height using the length of both legs.
+
+```{r}
+N <- 100
+height <- rnorm(N, 10, 2)
+
+# legs between 0.4 and 0.5 height
+leg_prop <- runif(N,0.4,0.5) 
+
+# salt left leg with small variation
+leg_left <- leg_prop*height + rnorm(N,0,0.02)
+
+# salt right leg with small variation
+leg_right <- leg_prop*height + rnorm(N,0,0.02)
+
+d <- data.frame(height, leg_left, leg_right)
+
+pairs(d)
+```
+
+Before we build the model, let's think about what we expect. The legs are around 45% of the height, so we would expect the beta coefficient to be aound the average height (10) divided by 45% of the height (4.5), so somewhere around 2.2.
+
+```{r}
+m5.9 <- map(
+  alist(
+    height ~ dnorm(mu, sigma),
+    mu <- a + bl*leg_left + br*leg_right,
+    a ~ dnorm(10,100),
+    bl ~ dnorm(2,10),
+    br ~ dnorm(2,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+plot(precis(m5.9))
+```
+
+The model doesn't know if the coefficients are even positive or negative. The model answered the question we asked: *what is the value of knowing the length of the each leg length after knowing the length of the other leg?*. Because the left and right leg lengths are very correlated, we are basically beuilding this model,
+
+$$
+\begin{aligned}
+y_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_1 x_i + \beta_2 x_i \\
+\mu_i &= \alpha + (\beta_1 + \beta_2)x_i \\
+\end{aligned}
+$$
+
+where two coefficient are estimated using the same covariate (i.e., 2 highly correlated covariates). There is basically an infinite number of ways that we can sum $beta_1$ and $beta_2$ that allows us to capture the correct association between x and y. Below is bivariate plot from samples of the $bl$ and $br$ from our posterior:
+
+```{r}
+post <- extract.samples(m5.9)
+qplot(bl,br,data=post) + theme_bw()
+```
+
+The estimates of $bl$ and $br$ are highly correlated, which is what is causing the identity problem. Let's look at the distribution of $br + bl$
+
+```{r, echo=F}
+samp_dens <- with(density(post$bl+post$br), data.frame(x,y)) %>%
+  mutate(y=y/sum(y))
+
+ggplot(data=samp_dens, aes(x,y)) + 
+  geom_line() + theme_bw() + labs(x="bl + br",y="density")
+```
+
+The mean is a little over 2 like we thought it should be, and the standard deviation is much smaller. It is basically the same distribution you would get if you just dropped one of the predictors. The important thing to note is that multicollinearity does not hurt the prediction accuracy, but just makes it impossible to say which predictor is having what effect on the outcome 
+
+**Non-identifiability in Bayesian models**
+
+Technically, all proper posterior distributions (integrates to 1) have indentifiable parameters but some might be very *weakly-identified*, which can be functionally the same as non-identified.
+
+### Post-treatment bias
+
+Issues can arise from including varaibles in in models that are consequences of other variables. We can simulate this using an example from testing the treatment effect of plant height.
+
+```{r}
+# number of plants
+N <- 100
+
+# simulate initial heights
+h0 <- rnorm(N,10,2)
+
+# assign treatments and simulate fungus growth
+treatment <- rep(0:1, each=N/2)
+fungus <- rbinom(N,size=1,prob=0.5 - treatment*0.4)
+h1 <- h0 + rnorm(N, 5 + (-3*fungus))
+
+# make data frame
+d <- data.frame(h0=h0, h1=h1, treatment=treatment, fungus=fungus)
+```
+
+This is the basic form of the model,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_h*h_0 + \beta_t*treatment + beta_f*fungus \\
+\end{aligned}
+$$
+
+```{r}
+m5.10 <- map(
+  alist(
+    h1 ~ dnorm(mu,sigma),
+    mu <- a + bh*h0 + bt*treatment + bf*fungus,
+    a ~ dnorm(0,50),
+    c(bh,bt,bf) ~ dnorm(0,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+plot(precis(m5.10))
+```
+
+The model is saying that the effect of the treatment is small, but the effect of the original height and the amount of fungus are important. It is answering the question, *one we know that a plant has fungus, does soil treatment matter?*, and the answer to that is no, because soil treatment effected growth by reducing fungus. If we want to know the effect of the treatment on the growth then we need to omit fungus, the post-treatment variable.
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_h*h_0 + \beta_t*treatment \\
+\end{aligned}
+$$
+
+```{r}
+m5.11 <- map(
+  alist(
+    h1 ~ dnorm(mu,sigma),
+    mu <- a + bh*h0 + bt*treatment,
+    a ~ dnorm(0,50),
+    c(bh,bt) ~ dnorm(0,10),
+    sigma ~ dunif(0,10)
+  ),
+  data=d)
+
+plot(precis(m5.11))
+```
+
+Now the effect of the treatment is much greater.
+
+### Categorical variables
+
+**Binary variable**
+
+The purpose of this section is to understand *how* a categorical variable is included in the model. Load in the height data that has a gender column,
+
+```{r}
+data(Howell1)
+d <- Howell1
+```
+
+```{r, echo=F, results='asis'}
+tab <- xtable(d[1:10,])
+print(tab,include.rownames=F,comment = F)
+```
+
+Here is the model we would like to fit,
+
+$$
+\begin{aligned}
+h_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_m*m_i \\
+\alpha &\sim N(180,100) \\
+\beta_m &\sim N(0,10) \\
+\sigma &\sim Uniform(0,50) \\
+\end{aligned}
+$$
+
+It should be clear that $\beta_m$ only has an effect when male=1 (when it is female then it is $\beta_m*0$).
+
+```{r}
+m5.12 <- map(
+  alist(
+    height ~ dnorm(mu,sigma),
+    mu <- a + bm*male,
+    a ~ dnorm(180,100),
+    bm ~ dnorm(0,10),
+    sigma ~ dunif(0,50)
+  ),
+  data=d)
+
+precis(m5.12)
+```
+
+Now $\alpha$ is the average height among females (because when $m_i=0$, then the prediction is just $\alpha$) and $\beta_m$ tells us the average difference in height among males and females. So the average male height is just $\alpha + \beta_m = 142.12$. We can calculate the posterior distriubtion of average male heights by,
+
+```{r}
+post <- extract.samples(m5.12)
+mu.male <- post$a + post$bm
+PI(mu.male)
+```
+
+**Many categories**
+
+The general rule is to use k-1 categories, where the "0" category is measured by the intercept. Start by loading the milt data:
+
+```{r}
+data(milk)
+d <- milk
+```
+
+There are four unique Clades, `r unique(d$clade)[1]`, `r unique(d$clade)[2]`, `r unique(d$clade)[3]`, and `r unique(d$clade)[4]`. The first step is to code those as dummy variables,
+
+```{r}
+d$clade.nwm <- ifelse(d$clade=="New World Monkey", 1, 0)
+d$clade.owm<- ifelse(d$clade=="Old World Monkey", 1, 0)
+d$clade.s <- ifelse(d$clade=="Strepsirrhine", 1, 0)
+```
+
+Recall, we don't need to add a category for Ape because it is the "0" category. We want to model kcal.per.g as a function of clade:
+
+
+$$
+\begin{aligned}
+k_i &\sim Normal(\mu_i,\sigma) \\
+\mu_i &= \alpha + \beta_1*nwm_i + \beta_2*owm_i + \beta_3*s_i \\
+\alpha &\sim N(0.6,10) \\
+\beta_1 &\sim N(0,1) \\
+\beta_2 &\sim N(0,1) \\
+\beta_3 &\sim N(0,1) \\
+\sigma &\sim Uniform(0,10) \\
+\end{aligned}
+$$

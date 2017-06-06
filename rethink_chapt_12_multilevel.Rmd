@@ -1,0 +1,420 @@
+---
+title: "SR chapter 12: Multi-level models"
+author: "scworland@usgs.gov"
+date: "2017"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: yes
+    toc_depth: 4
+header-includes: 
+  - \usepackage{tikz}
+  - \usepackage{pgfplots}
+---
+
+```{r, echo=F}
+knitr::opts_chunk$set(fig.width=6,fig.height=3,fig.align = 'center', warning=F, message=F,cache=F)
+library(pacman)
+pacman::p_load(coda,mvtnorm,devtools,rethinking,ggplot2,gridExtra,ggthemes,dplyr,magrittr,reshape2,xtable,purrr)
+
+#install_github("rmcelreath/rethinking",ref="Experimental")
+```
+
+## What are MLMs good for?
+
+1. *Improve estimates for repeat sampling*: when more than one observation arises from one "group", a single level model will either maximally overfit or maximally underfit to the data.
+
+2. *Does better with imbalance sampling*: due to pooling
+
+3. *Estimates of variation*: model variation explicitly
+
+4. *retain variation (avoid averaging)*: avoid data transformations
+
+4. *just better*: most real life problems have varying effects... so why not include them?
+
+## Example: tadpole mortality
+
+```{r}
+data("reedfrogs")
+d <- reedfrogs %>%
+  mutate(tank = 1:nrow(.))
+
+head(d)
+```
+
+Each row in the data represents a different tank. We want to understand what is driving the variability in `surv`. Is the the experimental treatment? The tank? Both? If we ignore the tanks, we are basically saying that the variation in baseline survival for each tank is not interesting... which could mask the effects of predictors. If we estimate a completely separate intercept for each tank, we are ignoring the fact the there is value is sharing information across tanks. First, a no pooling model:
+
+$$
+\begin{aligned}
+s_i &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha[tank]_i \\
+\alpha[tank] &\sim Normal(0,5)
+\end{aligned}
+$$
+```{r,cache=T,results='hide'}
+m12.1 <- map2stan(
+  alist(
+    surv ~ dbinom(density,p),
+    logit(p) <- a_tank[tank],
+    a_tank[tank] ~ dnorm(0,5)
+  ),
+  data=d)
+```
+
+and compare that a model that pools information across tanks. The formulas look almost identical:
+
+$$
+\begin{aligned}
+s_i &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha[tank]_i \\
+\alpha[tank] &\sim Normal(\alpha,\sigma) \\
+\alpha &\sim Normal(0,1) \\
+\sigma &\sim HalfCauchy(0,1) 
+\end{aligned}
+$$
+Notice that the prior for $\alpha[tank]$ is now a function of two parameters, which are themselves given priors. The prior for each tank is learned from the data itself. The top level model has an outcome of $s$, the parameters are $\alpha[tank]$ and the prior is $\alpha[tank] \sim Normal(\alpha,\sigma)$. For the second level, the outcome is a vector of intercept parameters, $\alpha[tank]$, the parameters are $\alpha$ and $\sigma$ (hyperparameters), and the priors are $\alpha \sim Normal(0,1)$ and $\sigma \sim HalfCauchy(0,1)$ (hyperpriors). 
+
+```{r,cache=T,results='hide'}
+m12.2 <- map2stan(
+  alist(
+    surv ~ dbinom(density,p),
+    logit(p) <- a_tank[tank],
+    a_tank[tank] ~ dnorm(a,sigma),
+    a ~ dnorm(0,1),
+    sigma ~ dcauchy(0,1)
+  ),
+  data=d, iter=4000, chains=4)
+```
+
+Compare the output:
+
+```{r}
+compare(m12.1,m12.2)
+```
+
+Compare the alphas:
+
+```{r}
+post.unpooled <- extract.samples(m12.1)
+post.pooled <- extract.samples(m12.2)
+
+d.plot <- data.frame(
+  pooled = logistic(apply(post.pooled$a_tank,2,median)),
+  no_pool = logistic(apply(post.unpooled$a_tank,2,median)),
+  tank = d$tank)
+```
+
+
+```{r, echo=F}         
+ggplot(d.plot) + 
+  geom_point(data=melt(d.plot,id.vars="tank"),aes(x=tank,y=value,shape=variable)) +
+  geom_hline(yintercept=logistic(median(post.unpooled$a)), linetype="dashed") +
+  geom_segment(aes(x=tank,y=pooled, xend=tank,yend=no_pool)) +
+  ggtitle("Pooled and unpooled estimates of mortality",
+          subtitle="Tank size increasing from left to right") +
+  scale_shape_manual(values=c(16,1)) +
+  labs(y="predicted proportion") +
+  theme_bw() 
+```
+
+The multilevel estimates shrunk towards the estimated median survival proportion in the population of tanks (i.e., $logistic(median(\alpha))$ form the multilevel model). This is due to the pooling. Each tank provides information that can help improve the estimates from all other tanks. Below is how to calculate the inferred population distribution of survival. 
+
+```{r, fig.width=5}
+# plot 100 samples from posterior
+n = 100
+
+## extract 100 samples from posterior
+post.grid <- data.frame(mean=post.pooled$a, 
+                        sd=post.pooled$sigma) 
+
+## choose values x values
+x=seq(-3,4,length.out = n)
+
+## custom dnorm function for mdply
+dnorm2 <- function(x,mean,sd) {
+  data.frame(x=x,value=dnorm(x,mean,sd))
+}
+
+## create samples for plot
+post.sample <- plyr::mdply(sample_n(post.grid,n), dnorm2, x)
+
+## plot
+ggplot(post.sample) + 
+  geom_line(aes(x,value,group=mean), alpha=0.2) +
+  labs(x="log-odds survival",y="density") +
+  theme_bw()
+```
+
+## Varying effects and underfitting/overfitting
+
+Simulate some data for demonstration. It is similar to above, but just imagine ponds rather than tanks. The data generating process is:
+
+$$
+\begin{aligned}
+s_i &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha[pond]_i \\
+\alpha[pond] &\sim Normal(\alpha,\sigma) \\
+\alpha &\sim Normal(0,1) \\
+\sigma &\sim HalfCauchy(0,1) 
+\end{aligned}
+$$
+
+```{r}
+# simulate data
+a <- 1.4 # average log odds of survival
+sigma <- 1.5 # sd of log-odds survival among ponds
+n <- 60 # number of ponds
+ni <- as.integer(rep(c(5,10,25,35), each=15)) # initial density
+a_pond <- rnorm(n,mean=a,sd=sigma) # simulate intercepts
+dsim <- data.frame(pond=1:n, ni=ni, true_a=a_pond)
+head(dsim)
+```
+
+The next step is to simulate the binomial survival process. Think of it as nature flipping each tadpoles coin with a probability $p_i$. 
+
+$$
+p_i = \frac{exp(\alpha_i)}{1+exp(\alpha_i)}
+$$
+```{r}
+dsim$si <- rbinom(n, prob=logistic(dsim$true_a), size = dsim$n)
+```
+
+To calculate the no pooling model we can either do an intercept only model or just calculate the empirical values:
+
+```{r}
+dsim$no_pool <- dsim$si/dsim$ni
+head(dsim)
+```
+
+No for the partial poolings estimates:
+
+```{r,cache=T,results='hide'}
+m12.3 <- map2stan(
+  alist(
+    si ~ dbinom(ni,p),
+    logit(p) <- a_pond[pond],
+    a_pond[pond] ~ dnorm(a,sigma),
+    a ~ dnorm(0,1),
+    sigma ~ dcauchy(0,1)
+  ),
+  data=dsim, iter=4000, 
+  chains=2, cores=2)
+```
+
+```{r}
+dsim$partial_pool <- logistic(as.numeric(coef(m12.3)[1:60]))
+dsim$p_true <- logistic(dsim$true_a)
+dsim$size <- rep(c("tiny","small","medium","large"), each=15)
+```
+\ 
+\ 
+
+```{r, echo=F, fig.width=6}      
+d.plot <- dsim %>%
+  mutate(no_pool_e = abs(no_pool-p_true),
+         partial_pool_e = abs(partial_pool-p_true),
+         size=factor(size,size)) %>%
+  group_by(size) %>%
+  mutate(nopool_mean_e = mean(no_pool_e),
+         partialpool_mean_e = mean(partial_pool_e)) %>%
+  ungroup() %>%
+  data.frame() 
+
+ggplot(d.plot) + 
+  geom_point(aes(pond,partial_pool_e),shape=16) +
+  geom_point(aes(pond,no_pool_e),shape=1) +
+  facet_wrap(~size, nrow=1, scales="free_x") +
+  geom_hline(aes(yintercept=nopool_mean_e), linetype="dashed") +
+  geom_hline(aes(yintercept=partialpool_mean_e)) +
+  ggtitle("No pooling vs partial pooling", 
+          subtitle="solid points and line = partial pooled, open and dashed = unpooled") +
+  labs(y="absolute error") +
+  theme_bw()
+```
+
+Notice that for small ponds the partial pooling helps much more than for small to large ponds, but also notice that it bacially doesn't ever hurt to partially pool rather than no pooling. The only time it might "hurt" the predictions is if there are actual outlier groups. Also, keep in mind, that it helps with *average error*, not neccessarily for each point.
+
+## More than one level
+
+There are sometimes more than one type of level that we might want to include in the model. The book has an example of the chimpanzee dataset where each individual has a slope and so does each block of experiments. Other examples includes cities within states, students that repeatedly take test from different schools, or even some combination of those. I don't go into the example here but it can be seen on page 370-376.
+
+## Multilevel posterior predictions
+
+If we want to predict responses for the same levels that we used to build the model, then we can just use link. If we want to use new levels, then it is a bit more complicated. Again, the book goes into a lot of examples that I do not go into in this write up. Mainly because it seems very specific to a type of problem and I should revisit it when I am trying to do the task.
+
+## Homework
+
+**(12E2)**
+
+Make multilevel model from a no pooling varying intercept model:
+
+$$
+\begin{aligned}
+y_i &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha[group]_i \\
+\alpha[group] &\sim Normal(\alpha,\sigma) \\
+\alpha &\sim Normal(0,1) \\
+\sigma &\sim HalfCauchy(0,1) 
+\end{aligned}
+$$
+**(12M1-12M2)**
+Add predation and size to the reed frog model from the chapter. 
+
+$$
+\begin{aligned}
+s_i &\sim Binomial(n_i,p_i) \\
+logit(p_i) &= \alpha[tank]_i + \beta_p*predation + \beta_s * size\\
+\alpha[tank] &\sim Normal(\alpha,\sigma) \\
+\alpha &\sim Normal(0,1) \\
+\sigma &\sim HalfCauchy(0,1) \\
+\beta_p &\sim Normal(0,5) \\
+\beta_s &\sim Normal(0,5) \\
+\end{aligned}
+$$
+
+```{r, cache=T, results='hide'}
+data("reedfrogs")
+d <- reedfrogs %>%
+  mutate(tank = 1:nrow(.),
+         size_i = coerce_index(size),
+         pred_i = coerce_index(pred))
+
+m12M1.1 <- map2stan(
+  alist(
+    surv ~ dbinom(density,p),
+    logit(p) <- a_tank[tank] + bp*pred_i,
+    a_tank[tank] ~ dnorm(a,sigma),
+    a ~ dnorm(0,1),
+    sigma ~ dcauchy(0,1),
+    bp ~ dnorm(0,5)
+  ),
+  data=d, iter=4000, 
+  chains=2, cores=2); 
+
+m12M1.2 <- map2stan(
+  alist(
+    surv ~ dbinom(density,p),
+    logit(p) <- a_tank[tank] + bs*size_i,
+    a_tank[tank] ~ dnorm(a,sigma),
+    a ~ dnorm(0,1),
+    sigma ~ dcauchy(0,1),
+    bs ~ dnorm(0,5)
+  ),
+  data=d, iter=4000, 
+  chains=2, cores=2)
+
+m12M1.3 <- map2stan(
+  alist(
+    surv ~ dbinom(density,p),
+    logit(p) <- a_tank[tank] + bp*pred_i + bs*size_i,
+    a_tank[tank] ~ dnorm(a,sigma),
+    a ~ dnorm(0,1),
+    sigma ~ dcauchy(0,1),
+    c(bp,bs) ~ dnorm(0,5)
+  ),
+  data=d, iter=4000, 
+  chains=2, cores=2)
+
+m12M1.4 <- map2stan(
+  alist(
+    surv ~ dbinom(density,p),
+    logit(p) <- a_tank[tank] + bp*pred_i + bs*size_i +
+      bsp*size_i*pred_i,
+    a_tank[tank] ~ dnorm(a,sigma),
+    a ~ dnorm(0,1),
+    sigma ~ dcauchy(0,1),
+    c(bp,bs,bsp) ~ dnorm(0,5)
+  ),
+  data=d, iter=4000, 
+  chains=4, cores=4)
+```
+
+```{r}
+# compare sigmas
+coeftab(m12M1.1,m12M1.2,m12M1.3,m12M1.4)@coefs[50,]
+
+# compare models
+compare(m12M1.1,m12M1.2,m12M1.3,m12M1.4)
+```
+
+**(12H1)**
+
+```{r}
+data("bangladesh")
+
+# change district to unique integer
+d <- bangladesh %>%
+  mutate(district_id = as.integer(as.factor(district)))
+
+str(d)
+```
+
+Build two models, one no pooled varying intercepts, and one with partially pooled intercepts. 
+
+```{r, cache=T, results='hide'}
+# prep trimmed data list
+dlist <- list(
+  use_contraception = d$use.contraception,
+  district = d$district_id )
+
+# no pooling
+m12H1f <- map2stan(
+  alist(
+    use_contraception ~ dbinom(1, p),
+    logit(p) <- a_district[district],
+    a_district[district] ~ dnorm(0,10)
+  ),
+  data=dlist)
+
+# partial poolig
+m12H1v <- map2stan(
+  alist(
+    use_contraception ~ dbinom(1, p),
+    logit(p) <- a + a_district[district],
+    a ~ dnorm(0,10),
+    a_district[district] ~ dnorm(0,sigma),
+    sigma ~ dcauchy(0,1)
+  ),
+  data=dlist)
+
+pred.dat <- data.frame(district=unique(d$district_id)) 
+
+pred1 <- link(m12H1f,data=pred.dat)
+pred2 <- link(m12H1v,data=pred.dat)
+```
+
+The following two plots show the exact same information. Just trying out several different approaches. 
+
+```{r, echo=F, fig.width=7}
+p.data <- pred.dat %>%
+  mutate(no_pool = apply(pred1,2,mean),
+         partial_pool = apply(pred2,2,mean),
+         low1 = apply(pred1,2,PI)[1,],
+         low2 = apply(pred2,2,PI)[1,],
+         high1 = apply(pred1,2,PI)[2,],
+         high2 = apply(pred2,2,PI)[2,]) 
+
+ggplot(p.data) + 
+  geom_pointrange(aes(x=district,y=no_pool, ymin=low1,ymax=high1), alpha=0.3) +
+  #geom_pointrange(aes(x=district,y=partial_pool, ymin=low2,ymax=high2),color="dodgerblue") +
+  geom_line(aes(x=district,y=partial_pool, group=1),color="dodgerblue") +
+  geom_line(aes(x=district,y=low2, group=1), linetype="dashed",color="dodgerblue") +
+  geom_line(aes(x=district,y=high2, group=1), linetype="dashed",color="dodgerblue") +
+  theme_bw() +
+  labs(y="predicted probability") +
+  ggtitle("Predicted contraception use Bengali women",
+          subtitle="Point ranges are unpooled, and blue lines are partially pooled (89% PI and mean)")
+
+ggplot(p.data) + 
+  geom_pointrange(aes(x=district,y=no_pool, ymin=low1,ymax=high1), alpha=0.3) +
+  geom_pointrange(aes(x=district,y=partial_pool, ymin=low2,ymax=high2),color="dodgerblue") +
+  # geom_line(aes(x=district,y=partial_pool, group=1),color="dodgerblue") +
+  # geom_line(aes(x=district,y=low2, group=1), linetype="dashed",color="dodgerblue") +
+  # geom_line(aes(x=district,y=high2, group=1), linetype="dashed",color="dodgerblue") +
+  theme_bw() +
+  labs(y="predicted probability") +
+  ggtitle("Predicted contraception use Bengali women",
+          subtitle="Black are unpooled, and blue are partially pooled (89% PI and mean)")
+```
+
+
